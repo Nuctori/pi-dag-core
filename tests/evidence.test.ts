@@ -33,7 +33,12 @@ test("normalizeInvocations: parallel tasks[] form shares toolCallId", () => {
 	const calls = normalizeInvocations({
 		toolCallId: "t1",
 		ts: 10,
-		input: { tasks: [{ agent: "a", task: "1" }, { agent: "b", task: "2" }] },
+		input: {
+			tasks: [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+			],
+		},
 		isError: false,
 		finished: true,
 	});
@@ -59,19 +64,39 @@ test("attributeInvocations: matches by agent+task, respects issue order and stal
 	];
 	const consumed = new Set<string>();
 	// stale (ts < issuedAt) → ignored
-	const stale = { toolCallId: "s", ts: 50, agent: "scout", task: "T", isError: false, finished: true };
+	const stale = {
+		toolCallId: "s",
+		ts: 50,
+		agent: "scout",
+		task: "T",
+		isError: false,
+		finished: true,
+	};
 	assert.deepEqual(attributeInvocations(pending, [stale], consumed), []);
 	// in-order attribution: first matching pending node wins
-	const one = { toolCallId: "1", ts: 150, agent: "scout", task: "T", isError: false, finished: true };
+	const one = {
+		toolCallId: "1",
+		ts: 150,
+		agent: "scout",
+		task: "T",
+		isError: false,
+		finished: true,
+	};
 	const attrs = attributeInvocations(pending, [one], consumed);
 	assert.equal(attrs.length, 1);
 	assert.equal(attrs[0]!.node, "a");
 });
 
 test("parseCheck: valid and invalid forms", () => {
-	assert.deepEqual(parseCheck(undefined), { type: "exists", pattern: undefined });
+	assert.deepEqual(parseCheck(undefined), {
+		type: "exists",
+		pattern: undefined,
+	});
 	assert.deepEqual(parseCheck("nonEmpty"), { type: "nonEmpty" });
-	assert.deepEqual(parseCheck("grep:APPROVED"), { type: "grep", pattern: "APPROVED" });
+	assert.deepEqual(parseCheck("grep:APPROVED"), {
+		type: "grep",
+		pattern: "APPROVED",
+	});
 	assert.equal(parseCheck("bogus"), null);
 });
 

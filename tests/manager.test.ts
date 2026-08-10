@@ -637,7 +637,10 @@ test("continueOnError: failed dep does not block dependent; finish can still pas
 		const c3 = await m.complete(run3, "done", t.project);
 		assert.ok(c3.ok, c3.error);
 		const fin = await m.finish(run3);
-		assert.ok(fin.ok, `finish must succeed despite optional failing: ${fin.error}`);
+		assert.ok(
+			fin.ok,
+			`finish must succeed despite optional failing: ${fin.error}`,
+		);
 	} finally {
 		await t.cleanup();
 	}

@@ -146,7 +146,7 @@ src/
 ## 测试
 
 ```bash
-npm run check   # tsc --noEmit + node --test（49 用例：46 单元/对抗 + 3 适配层 E2E）
+npm run check   # tsc --noEmit + node --test（60 用例：46 单元/对抗 + 14 适配层 E2E）
 npm test        # 仅跑测试
 ```
 

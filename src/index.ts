@@ -49,10 +49,12 @@ interface CapturedCall {
 /** Batch → human-readable payload block the AI must execute verbatim. */
 function renderBatch(batch: ReadyBatch): string {
 	if (batch.items.length === 0) return "(no ready nodes)";
-	const lines = batch.items.map((it) => {
-		const deps = it.depArtifacts ? `\n${it.depArtifacts}` : "";
-		return `- node: ${it.node}\n  agent: ${it.agent}\n  task: ${it.task}${deps}`;
-	});
+	// NOTE: `task` ALREADY carries the {artifacts} fan-in injection (done in
+	// nodePayload at issue time) — do NOT append depArtifacts again, or the
+	// rendered payload won't match the issuedTask and attribution fails.
+	const lines = batch.items.map(
+		(it) => `- node: ${it.node}\n  agent: ${it.agent}\n  task: ${it.task}`,
+	);
 	return lines.join("\n\n");
 }
 
@@ -155,16 +157,15 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 		// subagent call stays buffered so the next dag_complete can attribute it.
 		const finished = buffer.filter((b) => b.finished);
 		buffer = buffer.filter((b) => !b.finished);
-		const invocations = finished
-			.flatMap((c) =>
-				normalizeInvocations({
-					toolCallId: c.toolCallId,
-					ts: c.ts,
-					input: c.input,
-					isError: c.isError,
-					finished: true,
-				}),
-			);
+		const invocations = finished.flatMap((c) =>
+			normalizeInvocations({
+				toolCallId: c.toolCallId,
+				ts: c.ts,
+				input: c.input,
+				isError: c.isError,
+				finished: true,
+			}),
+		);
 		return manager.ingestCalls(run, invocations);
 	}
 
@@ -541,7 +542,11 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 					produces: [{ path: "review.md", check: "grep:APPROVED" }],
 				},
 				approve: { checkpoint: true, needs: ["review"] },
-				done: { agent: "worker", task: "Write the final summary to done.md", needs: ["approve"] },
+				done: {
+					agent: "worker",
+					task: "Write the final summary to done.md",
+					needs: ["approve"],
+				},
 			},
 		},
 		null,

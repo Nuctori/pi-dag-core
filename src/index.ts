@@ -22,6 +22,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { RunManager } from "./core.js";
+import { normalizeInvocations } from "./evidence.js";
 import {
 	defaultRoots,
 	listDefinitions,
@@ -29,7 +30,7 @@ import {
 	loadRunAny,
 	type Roots,
 } from "./state.js";
-import { renderMermaid, renderStatus, renderText } from "./viz.js";
+import { renderMermaid, renderText } from "./viz.js";
 import type { ReadyBatch, RunState } from "./types.js";
 
 const SUBAGENT_TOOL = "subagent";
@@ -154,47 +155,16 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 		// subagent call stays buffered so the next dag_complete can attribute it.
 		const finished = buffer.filter((b) => b.finished);
 		buffer = buffer.filter((b) => !b.finished);
-		const calls = finished.map((c) => ({
-			toolCallId: c.toolCallId,
-			ts: c.ts,
-			agent: (c.input as { agent?: unknown }).agent as string,
-			task: (c.input as { task?: unknown }).task as string,
-			tasks: (c.input as { tasks?: unknown }).tasks,
-			isError: c.isError,
-		}));
-		const invocations: {
-			toolCallId: string;
-			ts: number;
-			agent: string;
-			task: string;
-			isError: boolean;
-			finished: boolean;
-		}[] = [];
-		for (const c of calls) {
-			if (typeof c.agent === "string" && typeof c.task === "string") {
-				invocations.push({
+		const invocations = finished
+			.flatMap((c) =>
+				normalizeInvocations({
 					toolCallId: c.toolCallId,
 					ts: c.ts,
-					agent: c.agent,
-					task: c.task,
+					input: c.input,
 					isError: c.isError,
 					finished: true,
-				});
-			} else if (Array.isArray(c.tasks)) {
-				for (const t of c.tasks as { agent?: unknown; task?: unknown }[]) {
-					if (typeof t.agent === "string" && typeof t.task === "string") {
-						invocations.push({
-							toolCallId: c.toolCallId,
-							ts: c.ts,
-							agent: t.agent,
-							task: t.task,
-							isError: c.isError,
-							finished: true,
-						});
-					}
-				}
-			}
-		}
+				}),
+			);
 		return manager.ingestCalls(run, invocations);
 	}
 
@@ -258,7 +228,7 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 				if (!res.ok) return ok(`dag_start rejected:\n${res.error}`);
 				const batchText = renderBatch(res.batch!);
 				const text = [
-					`Workflow started: runId=${res.runId} (scope=${res.scope}, spec=${res.batch && res.batch.items.length ? res.runId : res.runId})`,
+					`Workflow started: runId=${res.runId} (scope=${res.scope})`,
 					"",
 					`Ready batch:\n${batchText}`,
 					"",
@@ -571,7 +541,7 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 					produces: [{ path: "review.md", check: "grep:APPROVED" }],
 				},
 				approve: { checkpoint: true, needs: ["review"] },
-				done: { needs: ["approve"] },
+				done: { agent: "worker", task: "Write the final summary to done.md", needs: ["approve"] },
 			},
 		},
 		null,

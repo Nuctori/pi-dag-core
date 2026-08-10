@@ -205,15 +205,6 @@ export async function appendEvent(
 	}
 }
 
-export async function persistSpec(
-	r: Roots,
-	run: RunState,
-	spec: Spec,
-): Promise<void> {
-	const dir = runDir(r, run.scope, run.runId);
-	await atomicWrite(join(dir, "spec.json"), JSON.stringify(spec, null, 2));
-}
-
 export async function loadRun(
 	r: Roots,
 	scope: Scope,
@@ -295,15 +286,6 @@ export async function removeRunDir(
 	}
 }
 
-/** Recreate a run from its persisted snapshot (recovery after reload). */
-export function restoreRun(raw: RunState): RunState {
-	// validate shape defensively
-	if (!raw || typeof raw.runId !== "string" || !raw.spec || !raw.nodes) {
-		throw new Error("corrupt run snapshot");
-	}
-	return raw;
-}
-
 export function freshRunFromSpec(
 	spec: Spec,
 	runId: string,
@@ -312,5 +294,3 @@ export function freshRunFromSpec(
 ): RunState {
 	return createRun(spec, runId, scope, now);
 }
-
-export { resolve };

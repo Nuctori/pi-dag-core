@@ -1,1 +1,0 @@
-SMOKE-OK: workflow completed.

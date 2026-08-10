@@ -18,10 +18,9 @@
  */
 import { createHash } from "node:crypto";
 import { readFile, stat, realpath } from "node:fs/promises";
-import { resolve, dirname, sep } from "node:path";
+import { resolve, sep } from "node:path";
 import type {
 	ArtifactEvidence,
-	BatchItem,
 	NodeSpec,
 	SubagentInvocation,
 } from "./types.js";
@@ -127,15 +126,6 @@ export function attributeInvocations(
 		attributions.push({ node: match.node, invocation: inv });
 	}
 	return attributions;
-}
-
-/** Strict comparison helper: agent+task must match verbatim. */
-export function payloadMatches(
-	item: BatchItem,
-	agent: string,
-	task: string,
-): boolean {
-	return item.agent === agent && item.task === task;
 }
 
 /* ------------------------------------------------------------------ */
@@ -252,11 +242,8 @@ export async function checkArtifacts(
 		} else if (entry.exists && !entry.mtimeAfterIssue) {
 			entry.detail = "written before the node was issued (stale artifact)";
 			ok = false;
-		} else if (entry.exists && parsed?.type === "nonEmpty" && entry.nonEmpty) {
-			// pass
-		} else if (entry.exists && !parsed) {
-			// "exists"-default semantics with a real file → pass
 		}
+		evidence.push(entry);
 		evidence.push(entry);
 	}
 	return { ok, hashes, evidence };
@@ -278,9 +265,3 @@ export function formatEvidence(evidence: ArtifactEvidence[]): string {
 		})
 		.join("\n");
 }
-
-export function artifactList(evidence: ArtifactEvidence[]): string {
-	return evidence.map((e) => e.path).join(", ") || "(none)";
-}
-
-export { dirname };

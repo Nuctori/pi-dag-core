@@ -22,7 +22,7 @@ export type NodeState =
 /** Run-level status. */
 export type RunStatus = "running" | "completed" | "aborted" | "degraded";
 
-/** Artifact checks: "exists" | "nonEmpty" | "grep:<re>" | "json" | "sha256" */
+/** Artifact checks: "exists" | "nonEmpty" | "json" | "grep:<re>" (sha256 is recorded, not checked). */
 export type Check = "exists" | "nonEmpty" | "json" | `grep:${string}`;
 
 export interface ArtifactSpec {
@@ -157,7 +157,6 @@ export interface BatchItem {
 	depArtifacts?: string;
 	produces: ArtifactSpec[];
 	loop?: { body: string; maxIterations: number };
-	isLoopBody?: boolean;
 }
 
 export interface ReadyBatch {
@@ -171,14 +170,4 @@ export interface TransitionResult {
 	error?: string;
 	batch: ReadyBatch;
 	run: RunState;
-}
-
-export interface FlowError extends Error {
-	kind:
-		| "validation"
-		| "protocol"
-		| "evidence"
-		| "state"
-		| "not_found"
-		| "policy";
 }

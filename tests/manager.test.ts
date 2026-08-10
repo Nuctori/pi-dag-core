@@ -622,10 +622,22 @@ test("continueOnError: failed dep does not block dependent; finish can still pas
 		const c = await m.complete(run2, "main", t.project);
 		assert.ok(c.ok);
 		// done should now be ready even though optional failed (continueOnError)
-		assert.ok(
-			c.batch.items.some((i) => i.node === "done"),
-			"done should be issued",
-		);
+		const doneItem = c.batch.items.find((i) => i.node === "done");
+		assert.ok(doneItem, "done should be issued");
+
+		// I1: a failed continueOnError leaf must NOT make the workflow
+		// un-finishable (default finish inference excludes soft nodes).
+		const run3 = (await loadRunAny(
+			{ project: t.project, user: t.user, sessionId: t.sessionId },
+			s.runId!,
+		))!.run;
+		await m.ingestCalls(run3, [
+			call(doneItem!.node, doneItem!.agent, doneItem!.task, "tc-done"),
+		]);
+		const c3 = await m.complete(run3, "done", t.project);
+		assert.ok(c3.ok, c3.error);
+		const fin = await m.finish(run3);
+		assert.ok(fin.ok, `finish must succeed despite optional failing: ${fin.error}`);
 	} finally {
 		await t.cleanup();
 	}

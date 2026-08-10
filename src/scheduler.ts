@@ -87,10 +87,15 @@ export function requiredNodes(run: RunState): string[] {
 	const spec = run.spec;
 	const names = Object.keys(spec.nodes);
 	const bodies = new Set(run.loopBodies);
+	// I1: the DEFAULT finish set must exclude continueOnError leaves — otherwise
+	// a soft node that legitimately failed becomes implicitly required and the
+	// workflow can never complete. An EXPLICIT `finish` list still overrides
+	// (M2: listed continueOnError nodes are then required by contract).
 	const finish = spec.finish?.length
 		? spec.finish
 		: names.filter((n) => {
 				if (bodies.has(n)) return false;
+				if (spec.nodes[n]?.continueOnError) return false;
 				return !Object.values(spec.nodes).some((on) => on.needs?.includes(n));
 			});
 	return finish;
@@ -126,7 +131,6 @@ function nodePayload(
 				body: name,
 				maxIterations: ownerNode.loop!.maxIterations ?? DEFAULT_MAX_ITERATIONS,
 			},
-			isLoopBody: true,
 		};
 	}
 
@@ -285,12 +289,6 @@ export function completeNode(
 export function failNode(run: RunState, node: string, reason: string): void {
 	const n = run.nodes[node];
 	if (!n) return;
-	const specNode = run.spec.nodes[node];
-
-	// loop body failure → advance the owning loop's iteration
-	if (specNode?.loop) {
-		// plain loop-body node: handled by its owner (below)
-	}
 	const owner = loopOwner(run, node);
 	if (owner) {
 		const ownerRun = run.nodes[owner];

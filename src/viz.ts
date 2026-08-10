@@ -79,13 +79,3 @@ export function renderMermaid(run: RunState): string {
 	lines.push("```");
 	return lines.join("\n");
 }
-
-export function renderStatus(run: RunState): string {
-	const counts: Record<string, number> = {};
-	for (const n of Object.values(run.nodes))
-		counts[n.state] = (counts[n.state] ?? 0) + 1;
-	const summary = Object.entries(counts)
-		.map(([s, c]) => `${c} ${s}`)
-		.join(", ");
-	return `${run.status} — ${summary}`;
-}

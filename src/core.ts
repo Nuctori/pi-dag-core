@@ -14,16 +14,9 @@ import {
 	loadDefinition,
 	loadRunAny,
 	persistRun,
-	persistSpec,
-	removeRunDir,
 	saveDefinition,
 } from "./state.js";
-import {
-	defaultPolicy,
-	formatIssues,
-	parseSpec,
-	validateSpec,
-} from "./spec.js";
+import { formatIssues, parseSpec } from "./spec.js";
 import {
 	checkFinish,
 	computeBatch,
@@ -32,7 +25,6 @@ import {
 	isReady,
 	loopOwner,
 	markExecuted,
-	requiredNodes,
 	resolveCheckpoint,
 	retryNode,
 } from "./scheduler.js";
@@ -145,7 +137,6 @@ export class RunManager {
 
 		const runId = `run-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 		const run = freshRunFromSpec(parsed.spec, runId, scope);
-		await persistSpec(this.roots, run, parsed.spec);
 		await persistRun(this.roots, run);
 		await appendEvent(this.roots, run, "start", {
 			scope,
@@ -310,7 +301,6 @@ export class RunManager {
 			}
 		}
 
-		// loop handling: if node is a loop body, advance the owner
 		await appendEvent(this.roots, run, "passed", {
 			node,
 			artifacts: art.hashes,
@@ -431,10 +421,6 @@ export class RunManager {
 
 	/* ------------------------------ helpers ------------------------------ */
 
-	required(run: RunState): string[] {
-		return requiredNodes(run);
-	}
-
 	private transitionError(run: RunState, error: string): TransitionResult {
 		return { ok: false, error, batch: { items: [], notes: [] }, run };
 	}
@@ -454,10 +440,6 @@ export class RunManager {
 		}
 	}
 
-	async cleanup(run: RunState): Promise<void> {
-		await removeRunDir(this.roots, run.scope, run.runId);
-	}
-
 	/** Validate a spec string without starting a run (AI-friendly checker). */
 	validate(specText: string): { ok: boolean; issues: string[] } {
 		const parsed = parseSpec(specText);
@@ -469,5 +451,3 @@ export class RunManager {
 		return { ok: true, issues: [] };
 	}
 }
-
-export { defaultPolicy, validateSpec };

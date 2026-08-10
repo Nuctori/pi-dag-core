@@ -26,8 +26,6 @@
       "produces": [{ "path": "final-review.md", "check": "grep:^(APPROVED|CHANGES)" }]
     },
     "fix-loop": {
-      "agent": "worker",
-      "task": "ignored (loop wrapper)",
       "needs": ["synthesis"],
       "loop": { "body": "fix-body", "until": "passed", "maxIterations": 3 }
     },

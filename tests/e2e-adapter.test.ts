@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -251,15 +251,18 @@ test("E2E (H2): missing subagent tool triggers a startup warning", async () => {
 	const t = await tmpProject();
 	try {
 		const pi = makePi(false);
+		const notified: { kind: string; text: string }[] = [];
 		dagCoreExtension(pi as unknown as ExtensionAPI);
 		await pi.emit(
 			"session_start",
 			{},
-			sessionCtx(t.dir, () => {}),
+			sessionCtx(t.dir, (text, kind) => notified.push({ kind, text })),
 		);
-		const notified = pi.tools.length > 0; // extension still registered its tools
-		assert.ok(notified);
-		// the extension must have registered all dag tools regardless
+		// I2: the warning must ACTUALLY fire, not just the tools register
+		const warning = notified.find((n) => n.kind === "error");
+		assert.ok(warning, "expected an error-level startup warning");
+		assert.match(warning!.text, /subagent/);
+		// the extension still registers all dag tools regardless
 		for (const name of ["dag_start", "dag_complete", "dag_finish"]) {
 			assert.ok(
 				pi.tools.some((x) => x.name === name),

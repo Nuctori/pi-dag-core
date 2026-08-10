@@ -143,10 +143,13 @@ function validateGraph(s: Spec): ValidationIssue[] {
 				issue(issues, p, "checkpoint node cannot be a verifier");
 			}
 		} else {
-			if (!n.agent)
-				issue(issues, p, "missing agent (required unless checkpoint)");
-			if (!n.task)
-				issue(issues, p, "missing task (required unless checkpoint)");
+			// loop owners never execute (their body does) — no agent/task needed,
+			// same spirit as the checkpoint exemption. No fake "ignored" payload.
+			const isLoopOwner = Boolean(n.loop);
+			if (!isLoopOwner && !n.agent)
+				issue(issues, p, "missing agent (required unless checkpoint/loop)");
+			if (!isLoopOwner && !n.task)
+				issue(issues, p, "missing task (required unless checkpoint/loop)");
 			// M9: gate is declared-but-not-enforced in v0 — reject it loudly
 			// instead of silently accepting a promise the runtime keeps.
 			if (n.gate) {

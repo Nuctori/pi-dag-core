@@ -146,11 +146,10 @@ src/
 ## 测试
 
 ```bash
-npm run check   # tsc --noEmit + node --test（43 个用例：40 单元/对抗 + 3 适配层 E2E）
+npm run check   # tsc --noEmit + node --test（49 用例：46 单元/对抗 + 3 适配层 E2E）
+npm test        # 仅跑测试
 ```
 
-npm run check   # tsc --noEmit + node --test（28 个用例）
+对抗场景覆盖：跳步（无执行即 complete）、改 payload、假产物、过期产物、提前 finish、循环耗竭、maxAgents 超限、并行 `tasks[]` 归因、continueOnError、subagent isError、路径逃逸、盘符/符号链接逃逸、陈旧事件、checkpoint 拒绝语义。
 
-```
-
-对抗场景覆盖：跳步（无执行即 complete）、改 payload、假产物、过期产物、提前 finish、循环耗竭、maxAgents 超限、并行 `tasks[]` 归因、continueOnError、subagent isError、路径逃逸。
+真实 pi 冒烟（CI `real-pi-smoke` job）：安装真实 pi + pi-subagents，用脚本化本地模型驱动真实会话跑通完整协议（dag_start → 真实 subagent 子进程 → dag_complete → dag_finish），断言 `SMOKE-OK`。

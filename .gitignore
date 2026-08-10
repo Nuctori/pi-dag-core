@@ -1,0 +1,15 @@
+# deps
+node_modules/
+
+# run state (workflow runtime artifacts — never commit)
+.pi/workflows/runs/
+.pi/workflows/.state*.json
+
+# logs / tmp
+*.log
+*.tmp
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/

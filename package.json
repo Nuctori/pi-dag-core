@@ -1,0 +1,26 @@
+{
+  "name": "pi-dag-core",
+  "version": "0.1.0",
+  "description": "Production-ready DAG workflow state machine for pi: AI orchestrates, human approves, agents follow the protocol. Execution via built-in subagent, correctness via CI-style evidence gates.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi", "pi-extension", "dag", "workflow", "orchestration", "subagents"],
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "files": ["src", "examples", "README.md", "DESIGN.md"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "typebox": "^1.0.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "latest",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

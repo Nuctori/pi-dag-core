@@ -1,0 +1,48 @@
+{
+  "name": "code-review-pipeline",
+  "version": 1,
+  "policy": { "failFast": true, "maxAgents": 12 },
+  "nodes": {
+    "discover": {
+      "agent": "scout",
+      "task": "Map the diff and changed modules; write context.md listing files, entry points and risks.",
+      "produces": [{ "path": "context.md", "check": "nonEmpty" }]
+    },
+    "api-review": {
+      "agent": "reviewer",
+      "task": "Review public API surface changes for breaking changes and consistency; write api-review.md with a verdict line starting with APPROVED or CHANGES.",
+      "produces": [{ "path": "api-review.md", "check": "grep:^(APPROVED|CHANGES)" }]
+    },
+    "test-review": {
+      "agent": "reviewer",
+      "task": "Review test coverage of the changed modules; write test-review.md with a verdict line starting with APPROVED or CHANGES.",
+      "produces": [{ "path": "test-review.md", "check": "grep:^(APPROVED|CHANGES)" }]
+    },
+    "synthesis": {
+      "agent": "reviewer",
+      "role": "verifier",
+      "needs": ["discover", "api-review", "test-review"],
+      "task": "Cross-check the findings in {artifacts}, reconcile disagreements, and write final-review.md with a verdict line starting with APPROVED or CHANGES.",
+      "produces": [{ "path": "final-review.md", "check": "grep:^(APPROVED|CHANGES)" }]
+    },
+    "fix-loop": {
+      "agent": "worker",
+      "task": "ignored (loop wrapper)",
+      "needs": ["synthesis"],
+      "loop": { "body": "fix-body", "until": "passed", "maxIterations": 3 }
+    },
+    "fix-body": {
+      "agent": "worker",
+      "task": "Apply the changes required by final-review.md, re-run the tests, and update final-review.md so its verdict line reads APPROVED.",
+      "produces": [{ "path": "final-review.md", "check": "grep:^APPROVED" }]
+    },
+    "approve": { "checkpoint": true, "needs": ["fix-loop"] },
+    "done": {
+      "agent": "worker",
+      "task": "Summarize the review outcome and artifact hashes into DONE.md.",
+      "produces": [{ "path": "DONE.md", "check": "nonEmpty" }],
+      "needs": ["approve"]
+    }
+  },
+  "finish": ["done"]
+}

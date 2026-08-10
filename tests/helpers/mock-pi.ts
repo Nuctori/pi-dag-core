@@ -28,12 +28,18 @@ export type NotifyEntry = { kind: string; text: string };
 export interface MockPi {
 	handlers: Map<string, (...args: unknown[]) => unknown>;
 	tools: ToolDef[];
-	commands: { name: string; handler: (args: string, ctx: unknown) => Promise<unknown> }[];
+	commands: {
+		name: string;
+		handler: (args: string, ctx: unknown) => Promise<unknown>;
+	}[];
 	notifyCalls: NotifyEntry[];
 	hasSubagent: boolean;
 	on(event: string, fn: (...args: unknown[]) => unknown): void;
 	registerTool(def: ToolDef): void;
-	registerCommand(name: string, def: { handler: (...a: unknown[]) => unknown }): void;
+	registerCommand(
+		name: string,
+		def: { handler: (...a: unknown[]) => unknown },
+	): void;
 	getAllTools(): { name: string }[];
 	emit(event: string, ...args: unknown[]): Promise<unknown>;
 	/** Invoke a registered /dag command, capturing ui.notify output. */
@@ -54,7 +60,10 @@ export function makePi(hasSubagent = true): MockPi {
 			this.tools.push(def);
 		},
 		registerCommand(name, def) {
-			this.commands.push({ name, handler: def.handler as MockPi["commands"][number]["handler"] });
+			this.commands.push({
+				name,
+				handler: def.handler as MockPi["commands"][number]["handler"],
+			});
 		},
 		getAllTools() {
 			return this.hasSubagent
@@ -70,14 +79,20 @@ export function makePi(hasSubagent = true): MockPi {
 			const cmd = this.commands.find((c) => c.name === "dag");
 			if (!cmd) throw new Error("dag command not registered");
 			const out: NotifyEntry[] = [];
-			await cmd.handler(args, sessionCtx(cwd, (text, kind) => out.push({ text, kind })));
+			await cmd.handler(
+				args,
+				sessionCtx(cwd, (text, kind) => out.push({ text, kind })),
+			);
 			return out;
 		},
 	};
 	return pi;
 }
 
-export function sessionCtx(cwd: string, notify: (text: string, kind: string) => void) {
+export function sessionCtx(
+	cwd: string,
+	notify: (text: string, kind: string) => void,
+) {
 	return {
 		cwd,
 		sessionManager: { getSessionId: () => "e2e-session" },
@@ -86,7 +101,11 @@ export function sessionCtx(cwd: string, notify: (text: string, kind: string) => 
 }
 
 /** Boot the extension in a fresh session and return the harness surface. */
-export async function bootExtension(pi: MockPi, cwd: string, notify?: (text: string, kind: string) => void) {
+export async function bootExtension(
+	pi: MockPi,
+	cwd: string,
+	notify?: (text: string, kind: string) => void,
+) {
 	dagCoreExtension(pi as unknown as ExtensionAPI);
 	await pi.emit("session_start", {}, sessionCtx(cwd, notify ?? (() => {})));
 	return pi;

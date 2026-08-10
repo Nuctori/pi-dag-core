@@ -9,11 +9,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	bootExtension,
-	makePi,
-	type MockPi,
-} from "./helpers/mock-pi.js";
+import { bootExtension, makePi, type MockPi } from "./helpers/mock-pi.js";
 
 const SPEC = JSON.stringify({
 	name: "e2e",
@@ -34,7 +30,9 @@ async function tmpProject() {
 
 async function startRun(pi: MockPi, dir: string, spec = SPEC) {
 	const start = pi.tools.find((t) => t.name === "dag_start")!;
-	const res = (await start.execute("c1", { spec }, undefined, undefined, { cwd: dir })) as {
+	const res = (await start.execute("c1", { spec }, undefined, undefined, {
+		cwd: dir,
+	})) as {
 		details: { runId?: string };
 		content: { type: string; text: string }[];
 	};
@@ -59,26 +57,56 @@ test("E2E: full adapter flow — start, capture, complete, finish", async () => 
 		const { agent, task } = toolArgs(text);
 
 		// the AI "executes" the node: subagent call fires start + end events
-		await pi.emit("tool_execution_start", { toolCallId: "tc-1", toolName: "subagent", args: { agent, task } });
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-1",
+			toolName: "subagent",
+			args: { agent, task },
+		});
 		await writeFile(join(t.dir, "ctx.md"), "artifact content");
-		await pi.emit("tool_execution_end", { toolCallId: "tc-1", toolName: "subagent", isError: false });
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-1",
+			toolName: "subagent",
+			isError: false,
+		});
 
 		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
-		const res = (await complete.execute("c2", { runId, node: "discover" }, undefined, undefined, { cwd: t.dir })) as {
+		const res = (await complete.execute(
+			"c2",
+			{ runId, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(res.content[0]?.text ?? "", /discover passed/);
 
 		// finish the remaining node + finish the workflow
-		await pi.emit("tool_execution_start", { toolCallId: "tc-2", toolName: "subagent", args: { agent: "worker", task: "wrap up" } });
-		await pi.emit("tool_execution_end", { toolCallId: "tc-2", toolName: "subagent", isError: false });
-		const c2 = (await complete.execute("c3", { runId, node: "done" }, undefined, undefined, { cwd: t.dir })) as {
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-2",
+			toolName: "subagent",
+			args: { agent: "worker", task: "wrap up" },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-2",
+			toolName: "subagent",
+			isError: false,
+		});
+		const c2 = (await complete.execute(
+			"c3",
+			{ runId, node: "done" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(c2.content[0]?.text ?? "", /done passed/);
 
 		const finish = pi.tools.find((x) => x.name === "dag_finish")!;
-		const f = (await finish.execute("c4", { runId }, undefined, undefined, { cwd: t.dir })) as {
+		const f = (await finish.execute("c4", { runId }, undefined, undefined, {
+			cwd: t.dir,
+		})) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(f.content[0]?.text ?? "", /completed/);
@@ -96,18 +124,38 @@ test("E2E (H1): dag_complete before the subagent call finishes is rejected", asy
 		const { agent, task } = toolArgs(text);
 
 		// launch observed (preflight) but execution_end NOT emitted yet
-		await pi.emit("tool_execution_start", { toolCallId: "tc-h1", toolName: "subagent", args: { agent, task } });
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-h1",
+			toolName: "subagent",
+			args: { agent, task },
+		});
 
 		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
-		const res = (await complete.execute("c2", { runId, node: "discover" }, undefined, undefined, { cwd: t.dir })) as {
+		const res = (await complete.execute(
+			"c2",
+			{ runId, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(res.content[0]?.text ?? "", /no execution evidence/);
 
 		// now the call finishes → the SAME buffered call becomes attributable
-		await pi.emit("tool_execution_end", { toolCallId: "tc-h1", toolName: "subagent", isError: false });
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-h1",
+			toolName: "subagent",
+			isError: false,
+		});
 		await writeFile(join(t.dir, "ctx.md"), "artifact content");
-		const res2 = (await complete.execute("c3", { runId, node: "discover" }, undefined, undefined, { cwd: t.dir })) as {
+		const res2 = (await complete.execute(
+			"c3",
+			{ runId, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(res2.content[0]?.text ?? "", /discover passed/);
@@ -121,12 +169,17 @@ test("E2E (H2): missing subagent tool triggers a startup warning", async () => {
 	try {
 		const pi = makePi(false);
 		const notified: { kind: string; text: string }[] = [];
-		await bootExtension(pi, t.dir, (text, kind) => notified.push({ text, kind }));
+		await bootExtension(pi, t.dir, (text, kind) =>
+			notified.push({ text, kind }),
+		);
 		const warning = notified.find((n) => n.kind === "error");
 		assert.ok(warning, "expected an error-level startup warning");
 		assert.match(warning!.text, /subagent/);
 		for (const name of ["dag_start", "dag_complete", "dag_finish"]) {
-			assert.ok(pi.tools.some((x) => x.name === name), `tool ${name} registered`);
+			assert.ok(
+				pi.tools.some((x) => x.name === name),
+				`tool ${name} registered`,
+			);
 		}
 	} finally {
 		await t.cleanup();

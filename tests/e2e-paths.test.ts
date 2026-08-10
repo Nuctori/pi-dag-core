@@ -21,7 +21,9 @@ async function tmpProject() {
 }
 
 /** Parse the "- node: X\n  agent: Y\n  task: Z…" blocks (task runs to block end). */
-function parseBatch(text: string): { node: string; agent: string; task: string }[] {
+function parseBatch(
+	text: string,
+): { node: string; agent: string; task: string }[] {
 	const out: { node: string; agent: string; task: string }[] = [];
 	for (const block of text.split("- node: ").slice(1)) {
 		const lines = block.split("\n");
@@ -58,12 +60,20 @@ async function execNode(
 	opts: { artifacts?: Record<string, string>; isError?: boolean } = {},
 ) {
 	const id = `tc-${++callSeq}`;
-	await pi.emit("tool_execution_start", { toolCallId: id, toolName: "subagent", args: { agent: item.agent, task: item.task } });
+	await pi.emit("tool_execution_start", {
+		toolCallId: id,
+		toolName: "subagent",
+		args: { agent: item.agent, task: item.task },
+	});
 	for (const [p, c] of Object.entries(opts.artifacts ?? {})) {
 		await mkdir(join(dir, p).replace(/[^/\\]+$/, ""), { recursive: true });
 		await writeFile(join(dir, p), c);
 	}
-	await pi.emit("tool_execution_end", { toolCallId: id, toolName: "subagent", isError: opts.isError ?? false });
+	await pi.emit("tool_execution_end", {
+		toolCallId: id,
+		toolName: "subagent",
+		isError: opts.isError ?? false,
+	});
 }
 
 function tool(pi: MockPi, name: string) {
@@ -73,7 +83,13 @@ function tool(pi: MockPi, name: string) {
 }
 
 async function start(pi: MockPi, dir: string, spec: string) {
-	const res = (await tool(pi, "dag_start").execute("c-start", { spec }, undefined, undefined, { cwd: dir })) as {
+	const res = (await tool(pi, "dag_start").execute(
+		"c-start",
+		{ spec },
+		undefined,
+		undefined,
+		{ cwd: dir },
+	)) as {
 		content: { type: string; text: string }[];
 	};
 	const text = res.content[0]?.text ?? "";
@@ -83,7 +99,13 @@ async function start(pi: MockPi, dir: string, spec: string) {
 }
 
 async function complete(pi: MockPi, dir: string, runId: string, node: string) {
-	const res = (await tool(pi, "dag_complete").execute("c-comp", { runId, node }, undefined, undefined, { cwd: dir })) as {
+	const res = (await tool(pi, "dag_complete").execute(
+		"c-comp",
+		{ runId, node },
+		undefined,
+		undefined,
+		{ cwd: dir },
+	)) as {
 		content: { type: string; text: string }[];
 	};
 	return res.content[0]?.text ?? "";
@@ -93,7 +115,13 @@ async function complete(pi: MockPi, dir: string, runId: string, node: string) {
 
 const ONE = JSON.stringify({
 	name: "one",
-	nodes: { a: { agent: "w", task: "do A", produces: [{ path: "a.md", check: "nonEmpty" }] } },
+	nodes: {
+		a: {
+			agent: "w",
+			task: "do A",
+			produces: [{ path: "a.md", check: "nonEmpty" }],
+		},
+	},
 });
 
 const PARALLEL = JSON.stringify({
@@ -108,15 +136,28 @@ const PARALLEL = JSON.stringify({
 const VERIFIER = JSON.stringify({
 	name: "ver",
 	nodes: {
-		discover: { agent: "scout", task: "Explore and write ctx.md", produces: [{ path: "ctx.md", check: "nonEmpty" }] },
-		review: { agent: "reviewer", role: "verifier", task: "Check {artifacts}", needs: ["discover"] },
+		discover: {
+			agent: "scout",
+			task: "Explore and write ctx.md",
+			produces: [{ path: "ctx.md", check: "nonEmpty" }],
+		},
+		review: {
+			agent: "reviewer",
+			role: "verifier",
+			task: "Check {artifacts}",
+			needs: ["discover"],
+		},
 	},
 });
 
 const LOOP = JSON.stringify({
 	name: "loop",
 	nodes: {
-		body: { agent: "w", task: "Write report.md with FIXED", produces: [{ path: "report.md", check: "grep:FIXED" }] },
+		body: {
+			agent: "w",
+			task: "Write report.md with FIXED",
+			produces: [{ path: "report.md", check: "grep:FIXED" }],
+		},
 		loop: { loop: { body: "body", maxIterations: 3 } },
 		done: { agent: "w", task: "wrap", needs: ["loop"] },
 	},
@@ -147,7 +188,13 @@ test("path 6/7: fail → retry → pass → finish", async () => {
 		assert.match(res, /artifact evidence failed/);
 
 		// retry re-issues the payload
-		const retryRes = (await tool(pi, "dag_retry").execute("c-r", { runId, node: a.node }, undefined, undefined, { cwd: t.dir })) as {
+		const retryRes = (await tool(pi, "dag_retry").execute(
+			"c-r",
+			{ runId, node: a.node },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		const retryText = retryRes.content[0]?.text ?? "";
@@ -157,7 +204,13 @@ test("path 6/7: fail → retry → pass → finish", async () => {
 		await execNode(pi, t.dir, a, { artifacts: { "a.md": "content" } });
 		res = await complete(pi, t.dir, runId, a.node);
 		assert.match(res, /a passed/);
-		const fin = (await tool(pi, "dag_finish").execute("c-f", { runId }, undefined, undefined, { cwd: t.dir })) as {
+		const fin = (await tool(pi, "dag_finish").execute(
+			"c-f",
+			{ runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(fin.content[0]?.text ?? "", /completed/);
@@ -195,8 +248,21 @@ test("path 3: parallel tasks[] batch executes both roots then the join", async (
 
 		// ONE subagent call carrying both tasks (parallel form, shared toolCallId)
 		const id = `tc-par-${++callSeq}`;
-		await pi.emit("tool_execution_start", { toolCallId: id, toolName: "subagent", args: { tasks: [{ agent: a.agent, task: a.task }, { agent: b.agent, task: b.task }] } });
-		await pi.emit("tool_execution_end", { toolCallId: id, toolName: "subagent", isError: false });
+		await pi.emit("tool_execution_start", {
+			toolCallId: id,
+			toolName: "subagent",
+			args: {
+				tasks: [
+					{ agent: a.agent, task: a.task },
+					{ agent: b.agent, task: b.task },
+				],
+			},
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: id,
+			toolName: "subagent",
+			isError: false,
+		});
 
 		assert.match(await complete(pi, t.dir, runId, "a"), /a passed/);
 		const afterB = await complete(pi, t.dir, runId, "b");
@@ -275,7 +341,11 @@ test("path 9: checkpoint human gate — approve unlocks, reject blocks", async (
 		await complete(pi, t.dir, runId, "discover");
 
 		const status = await pi.runCommand(`status ${runId}`, t.dir);
-		assert.match(status[0]?.text ?? "", /⏸ approve/, "checkpoint shown as awaiting");
+		assert.match(
+			status[0]?.text ?? "",
+			/⏸ approve/,
+			"checkpoint shown as awaiting",
+		);
 
 		// human approves via the slash command
 		const approved = await pi.runCommand(`approve ${runId} approve`, t.dir);
@@ -288,9 +358,18 @@ test("path 9: checkpoint human gate — approve unlocks, reject blocks", async (
 		const d2 = firstBatch(r2.text, "discover");
 		await execNode(pi2, t.dir, d2);
 		await complete(pi2, t.dir, r2.runId, "discover");
-		const rejected = await pi2.runCommand(`reject ${r2.runId} approve no-go`, t.dir);
+		const rejected = await pi2.runCommand(
+			`reject ${r2.runId} approve no-go`,
+			t.dir,
+		);
 		assert.match(rejected[0]?.text ?? "", /rejected/);
-		const fin = (await tool(pi2, "dag_finish").execute("c-f", { runId: r2.runId }, undefined, undefined, { cwd: t.dir })) as {
+		const fin = (await tool(pi2, "dag_finish").execute(
+			"c-f",
+			{ runId: r2.runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(fin.content[0]?.text ?? "", /incomplete/);
@@ -306,7 +385,13 @@ test("path 10: abort stops the run; later transitions are refused", async () => 
 		await bootExtension(pi, t.dir);
 		const { runId, text } = await start(pi, t.dir, ONE);
 		const a = firstBatch(text, "a");
-		const ab = (await tool(pi, "dag_abort").execute("c-ab", { runId, reason: "changed my mind" }, undefined, undefined, { cwd: t.dir })) as {
+		const ab = (await tool(pi, "dag_abort").execute(
+			"c-ab",
+			{ runId, reason: "changed my mind" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(ab.content[0]?.text ?? "", /aborted/);
@@ -331,12 +416,18 @@ test("path 11: resume re-issues an in-flight node in a NEW session", async () =>
 		// brand-new session (fresh extension instance)
 		const pi2 = makePi();
 		await bootExtension(pi2, t.dir);
-		const resumeRes = (await tool(pi2, "dag_start").execute("c-rs", { resumeRunId: runId }, undefined, undefined, { cwd: t.dir })) as {
+		const resumeRes = (await tool(pi2, "dag_start").execute(
+			"c-rs",
+			{ resumeRunId: runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		const resumeText = resumeRes.content[0]?.text ?? "";
 		assert.match(resumeText, /Ready batch/);
-		const again = firstBatch(resumeText, "a");
+		firstBatch(resumeText, "a");
 	} finally {
 		await t.cleanup();
 	}
@@ -352,13 +443,22 @@ test("path 12/13: /dag save promotes inline spec; dag_start(specName) loads it",
 		const saved = await pi.runCommand("save myflow", t.dir);
 		assert.match(saved[0]?.text ?? "", /saved definition "myflow"/);
 		const defFile = join(t.dir, ".pi", "workflows", "myflow.json");
-		const content = await (await import("node:fs/promises")).readFile(defFile, "utf8");
+		const content = await (await import("node:fs/promises")).readFile(
+			defFile,
+			"utf8",
+		);
 		assert.ok(content.includes('"name": "one"'));
 
 		// fresh session loads the project-scope definition by name
 		const pi2 = makePi();
 		await bootExtension(pi2, t.dir);
-		const res = (await tool(pi2, "dag_start").execute("c-n", { specName: "myflow" }, undefined, undefined, { cwd: t.dir })) as {
+		const res = (await tool(pi2, "dag_start").execute(
+			"c-n",
+			{ specName: "myflow" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		const text = res.content[0]?.text ?? "";
@@ -400,7 +500,154 @@ test("path 17: maxAgents caps issued nodes", async () => {
 			nodes: { a: { agent: "w", task: "A" }, b: { agent: "w", task: "B" } },
 		});
 		const { text } = await start(pi, t.dir, spec);
-		assert.equal(parseBatch(text).length, 1, "only one node issued under maxAgents");
+		assert.equal(
+			parseBatch(text).length,
+			1,
+			"only one node issued under maxAgents",
+		);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("path 5b: loop exhaustion past maxIterations blocks the workflow", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const spec = JSON.stringify({
+			name: "loop-exh",
+			nodes: {
+				body: { agent: "w", task: "Write report.md with FIXED", produces: [{ path: "report.md", check: "grep:FIXED" }] },
+				loop: { loop: { body: "body", maxIterations: 2 } },
+				done: { agent: "w", task: "wrap", needs: ["loop"] },
+			},
+		});
+		const { runId, text } = await start(pi, t.dir, spec);
+		const body = firstBatch(text, "body");
+
+		// both iterations fail (no artifact)
+		for (let i = 0; i < 2; i++) {
+			await execNode(pi, t.dir, body);
+			const res = await complete(pi, t.dir, runId, "body");
+			assert.match(res, /artifact evidence failed/);
+		}
+		// loop exhausted → done never issued; finish incomplete
+		const fin = (await tool(pi, "dag_finish").execute("c-f", { runId }, undefined, undefined, { cwd: t.dir })) as {
+			content: { type: string; text: string }[];
+		};
+		assert.match(fin.content[0]?.text ?? "", /incomplete/);
+		assert.match(fin.content[0]?.text ?? "", /exhausted/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("path 18: explicit finish defeats continueOnError; default inference does not", async () => {
+	const t = await tmpProject();
+	try {
+		// explicit finish listing the soft node → cannot finish
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const spec = JSON.stringify({
+			name: "finish-required",
+			finish: ["opt"],
+			nodes: { opt: { agent: "w", task: "do", continueOnError: true } },
+		});
+		const { runId, text } = await start(pi, t.dir, spec);
+		const opt = firstBatch(text, "opt");
+		await execNode(pi, t.dir, opt);
+		await tool(pi, "dag_fail").execute("c-f", { runId, node: "opt", reason: "soft fail" }, undefined, undefined, { cwd: t.dir });
+		const fin1 = (await tool(pi, "dag_finish").execute("c-f2", { runId }, undefined, undefined, { cwd: t.dir })) as {
+			content: { type: string; text: string }[];
+		};
+		assert.match(fin1.content[0]?.text ?? "", /incomplete/, "explicit finish must not pass");
+
+		// default inference (no finish list): a failed soft leaf does NOT block
+		const pi2 = makePi();
+		await bootExtension(pi2, t.dir);
+		const spec2 = JSON.stringify({
+			name: "soft-default",
+			nodes: { opt: { agent: "w", task: "do", continueOnError: true } },
+		});
+		const r2 = await start(pi2, t.dir, spec2);
+		const o2 = firstBatch(r2.text, "opt");
+		await execNode(pi2, t.dir, o2);
+		await tool(pi2, "dag_fail").execute("c-f", { runId: r2.runId, node: "opt", reason: "soft fail" }, undefined, undefined, { cwd: t.dir });
+		const fin2 = (await tool(pi2, "dag_finish").execute("c-f2", { runId: r2.runId }, undefined, undefined, { cwd: t.dir })) as {
+			content: { type: string; text: string }[];
+		};
+		assert.match(fin2.content[0]?.text ?? "", /completed/, "soft leaf must not block finish");
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("path 6b: dag_fail tool marks a node failed; retry re-issues it", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const { runId, text } = await start(pi, t.dir, ONE);
+		const a = firstBatch(text, "a");
+		await execNode(pi, t.dir, a);
+		// dag_fail while the node is running/ready
+		const fl = (await tool(pi, "dag_fail").execute("c-fl", { runId, node: "a", reason: "blocked externally" }, undefined, undefined, { cwd: t.dir })) as {
+			content: { type: string; text: string }[];
+		};
+		assert.match(fl.content[0]?.text ?? "", /marked failed/);
+		// complete after fail → refused (must retry)
+		const refused = await complete(pi, t.dir, runId, "a");
+		assert.match(refused, /failed/);
+		// retry → re-issued → pass
+		const rt = (await tool(pi, "dag_retry").execute("c-rt", { runId, node: "a" }, undefined, undefined, { cwd: t.dir })) as {
+			content: { type: string; text: string }[];
+		};
+		assert.match(rt.content[0]?.text ?? "", /re-issued/);
+		await execNode(pi, t.dir, a, { artifacts: { "a.md": "content" } });
+		assert.match(await complete(pi, t.dir, runId, "a"), /a passed/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("command edges: unknown run / non-checkpoint approve / bad node are refused", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const { runId } = await start(pi, t.dir, CHECKPOINT);
+
+		const noRun = await pi.runCommand("status run-does-not-exist", t.dir);
+		assert.match(noRun[0]?.text ?? "", /not found/);
+		const noRunApprove = await pi.runCommand("approve run-does-not-exist approve", t.dir);
+		assert.match(noRunApprove[0]?.text ?? "", /not found/);
+
+		// approve a non-checkpoint node (discover, not awaiting) → refused
+		const badNode = await pi.runCommand(`approve ${runId} discover`, t.dir);
+		assert.match(badNode[0]?.text ?? "", /not a checkpoint|not awaiting/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("edge: resuming a completed run is refused", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const { runId, text } = await start(pi, t.dir, ONE);
+		const a = firstBatch(text, "a");
+		await execNode(pi, t.dir, a, { artifacts: { "a.md": "content" } });
+		await complete(pi, t.dir, runId, "a");
+		await tool(pi, "dag_finish").execute("c-f", { runId }, undefined, undefined, { cwd: t.dir });
+
+		const pi2 = makePi();
+		await bootExtension(pi2, t.dir);
+		const resumeRes = (await tool(pi2, "dag_start").execute("c-rs", { resumeRunId: runId }, undefined, undefined, { cwd: t.dir })) as {
+			content: { type: string; text: string }[];
+		};
+		assert.match(resumeRes.content[0]?.text ?? "", /not resumable/);
 	} finally {
 		await t.cleanup();
 	}

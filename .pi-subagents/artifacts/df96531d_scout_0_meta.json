@@ -1,0 +1,115 @@
+{
+  "runId": "df96531d",
+  "agent": "scout",
+  "task": "Explore the module and write ctx.md\n\n---\n**Output:**\nWrite your findings to exactly this path: C:\\Users\\Nuctori\\pi-dag-core\\.pi-subagents\\artifacts\\outputs\\df96531d\\context.md\nThis path is authoritative for this run.\nIgnore any other output filename or output path mentioned elsewhere, including output destinations in the base agent prompt, system prompt, or task instructions.",
+  "exitCode": 0,
+  "processSignal": "SIGTERM",
+  "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "cost": 0,
+    "turns": 1
+  },
+  "model": "scripted/scripted-model:low",
+  "attemptedModels": [
+    "scripted/scripted-model:low"
+  ],
+  "modelAttempts": [
+    {
+      "model": "scripted/scripted-model:low",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0,
+        "turns": 1
+      }
+    }
+  ],
+  "durationMs": 14030,
+  "toolCount": 0,
+  "launchContractDigest": "941a49c7c9b9152ac7ceaedfb41eb28cc72177626d819d1b6b66f945a26adfe7",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": false,
+    "runtime": [
+      "sha256:9f22e11107533a7d"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:9f22e11107533a7d"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "rejected",
+    "evidenceStatus": "rejected",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "attested",
+      "explicit": false,
+      "inferredReason": [
+        "read-only/reviewer-style agent"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Return concrete findings with file paths and severity when applicable",
+          "evidence": [
+            "review-findings",
+            "residual-risks"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "review-findings",
+        "residual-risks"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "read-only/reviewer-style agent"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Return concrete findings with file paths and severity when applicable",
+        "evidence": [
+          "review-findings",
+          "residual-risks"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [
+      {
+        "id": "attestation",
+        "status": "failed",
+        "message": "Structured acceptance report not found."
+      }
+    ],
+    "verifyRuns": [],
+    "childReportParseError": "Structured acceptance report not found."
+  },
+  "effects": {
+    "fileMutation": {
+      "status": "not-applicable",
+      "expected": false,
+      "attempted": false
+    }
+  },
+  "transcriptPath": "C:\\Users\\Nuctori\\pi-dag-core\\.pi-subagents\\artifacts\\df96531d_scout_0_transcript.jsonl",
+  "timestamp": 1786395925909
+}

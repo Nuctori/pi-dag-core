@@ -23,3 +23,23 @@ jobs:
       - run: npm run check
       # The shipped example spec must validate
       - run: node --import tsx tests/example-spec-check.ts
+
+  # REAL-pi smoke: boots an actual pi agent session with dag-core loaded,
+  # driven by a scripted local model (no API key), exercising the real event
+  # stream end-to-end (dag_start → subagent child process → dag_complete →
+  # dag_finish). Requires pi + pi-subagents.
+  real-pi-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm install -g @earendil-works/pi-coding-agent
+      - name: Real-pi protocol smoke
+        run: bash tests/real-e2e/run-real-smoke.sh
+        env:
+          SMOKE_HOME: ${{ runner.temp }}/smoke-home
+        timeout-minutes: 10

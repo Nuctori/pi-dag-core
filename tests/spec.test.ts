@@ -102,7 +102,11 @@ test("unsafe artifact path is rejected", () => {
 });
 
 test("M5: Windows drive-letter artifact paths are rejected", () => {
-	for (const p of ["C:/Windows/win.ini", "C:\\Windows\\win.ini", "D:relative.txt"]) {
+	for (const p of [
+		"C:/Windows/win.ini",
+		"C:\\Windows\\win.ini",
+		"D:relative.txt",
+	]) {
 		const bad = JSON.stringify({
 			name: "x",
 			nodes: { a: { agent: "w", task: "t", produces: [{ path: p }] } },
@@ -127,7 +131,11 @@ test("L4: over-long grep patterns are rejected", () => {
 	const bad = JSON.stringify({
 		name: "x",
 		nodes: {
-			a: { agent: "w", task: "t", produces: [{ path: "a.md", check: `grep:${"a".repeat(300)}` }] },
+			a: {
+				agent: "w",
+				task: "t",
+				produces: [{ path: "a.md", check: `grep:${"a".repeat(300)}` }],
+			},
 		},
 	});
 	assert.match(issuesOf(bad).join(" "), /grep pattern too long/);

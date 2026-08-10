@@ -429,7 +429,11 @@ export function checkFinish(run: RunState): { ok: boolean; report: string[] } {
 			report.push(`  ✓ ${name}`);
 			continue;
 		}
-		if (n.state === "failed" && specN.continueOnError && !requiredSet.has(name)) {
+		if (
+			n.state === "failed" &&
+			specN.continueOnError &&
+			!requiredSet.has(name)
+		) {
 			report.push(`  ⚠ ${name} (failed, continueOnError)`);
 			continue;
 		}

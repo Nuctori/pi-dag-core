@@ -297,33 +297,33 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			return serial(async () => {
-			try {
-				requireRoots();
-				const run = await loadRun(params.runId);
-				if ("error" in run) return ok(`dag_complete rejected: ${run.error}`);
-				await ingestAndDrain(run);
-				const res = await manager.complete(run, params.node, ctx.cwd);
-				if (!res.ok)
+				try {
+					requireRoots();
+					const run = await loadRun(params.runId);
+					if ("error" in run) return ok(`dag_complete rejected: ${run.error}`);
+					await ingestAndDrain(run);
+					const res = await manager.complete(run, params.node, ctx.cwd);
+					if (!res.ok)
+						return ok(
+							`dag_complete rejected for "${params.node}":\n${res.error}`,
+						);
+					const batchText = renderBatch(res.batch);
+					const evidence = res.evidenceReport
+						? `\nArtifact evidence:\n${res.evidenceReport}`
+						: "";
 					return ok(
-						`dag_complete rejected for "${params.node}":\n${res.error}`,
+						[
+							`✓ ${params.node} passed.${evidence}`,
+							"",
+							`Ready batch:\n${batchText}`,
+							"",
+							PROTOCOL,
+						].join("\n"),
+						{ runId: params.runId, next: res.batch },
 					);
-				const batchText = renderBatch(res.batch);
-				const evidence = res.evidenceReport
-					? `\nArtifact evidence:\n${res.evidenceReport}`
-					: "";
-				return ok(
-					[
-						`✓ ${params.node} passed.${evidence}`,
-						"",
-						`Ready batch:\n${batchText}`,
-						"",
-						PROTOCOL,
-					].join("\n"),
-					{ runId: params.runId, next: res.batch },
-				);
-			} catch (e) {
-				return ok(`dag_complete error: ${(e as Error).message}`);
-			}
+				} catch (e) {
+					return ok(`dag_complete error: ${(e as Error).message}`);
+				}
 			});
 		},
 	});
@@ -341,19 +341,19 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 		}),
 		async execute(_toolCallId, params) {
 			return serial(async () => {
-			try {
-				requireRoots();
-				const run = await loadRun(params.runId);
-				if ("error" in run) return ok(`dag_fail rejected: ${run.error}`);
-				await ingestAndDrain(run);
-				const res = await manager.fail(run, params.node, params.reason);
-				if (!res.ok) return ok(`dag_fail rejected: ${res.error}`);
-				return ok(
-					`✗ ${params.node} marked failed: ${params.reason}\n\nNext batch:\n${renderBatch(res.batch)}`,
-				);
-			} catch (e) {
-				return ok(`dag_fail error: ${(e as Error).message}`);
-			}
+				try {
+					requireRoots();
+					const run = await loadRun(params.runId);
+					if ("error" in run) return ok(`dag_fail rejected: ${run.error}`);
+					await ingestAndDrain(run);
+					const res = await manager.fail(run, params.node, params.reason);
+					if (!res.ok) return ok(`dag_fail rejected: ${res.error}`);
+					return ok(
+						`✗ ${params.node} marked failed: ${params.reason}\n\nNext batch:\n${renderBatch(res.batch)}`,
+					);
+				} catch (e) {
+					return ok(`dag_fail error: ${(e as Error).message}`);
+				}
 			});
 		},
 	});
@@ -370,18 +370,18 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 		}),
 		async execute(_toolCallId, params) {
 			return serial(async () => {
-			try {
-				requireRoots();
-				const run = await loadRun(params.runId);
-				if ("error" in run) return ok(`dag_retry rejected: ${run.error}`);
-				const res = await manager.retry(run, params.node);
-				if (!res.ok) return ok(`dag_retry rejected: ${res.error}`);
-				return ok(
-					`↻ ${params.node} re-issued. Execute with subagent, then dag_complete.\n\n${renderBatch(res.batch)}`,
-				);
-			} catch (e) {
-				return ok(`dag_retry error: ${(e as Error).message}`);
-			}
+				try {
+					requireRoots();
+					const run = await loadRun(params.runId);
+					if ("error" in run) return ok(`dag_retry rejected: ${run.error}`);
+					const res = await manager.retry(run, params.node);
+					if (!res.ok) return ok(`dag_retry rejected: ${res.error}`);
+					return ok(
+						`↻ ${params.node} re-issued. Execute with subagent, then dag_complete.\n\n${renderBatch(res.batch)}`,
+					);
+				} catch (e) {
+					return ok(`dag_retry error: ${(e as Error).message}`);
+				}
 			});
 		},
 	});

@@ -240,9 +240,7 @@ export async function loadRunAny(
 	return null;
 }
 
-export async function listRuns(
-	r: Roots,
-): Promise<
+export async function listRuns(r: Roots): Promise<
 	{
 		runId: string;
 		scope: Scope;

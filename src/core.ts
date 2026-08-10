@@ -238,7 +238,10 @@ export class RunManager {
 		const n = run.nodes[node];
 		if (!n) return this.transitionError(run, `unknown node "${node}"`);
 		if (run.status !== "running")
-			return this.transitionError(run, `run is ${run.status} — no transitions allowed`);
+			return this.transitionError(
+				run,
+				`run is ${run.status} — no transitions allowed`,
+			);
 		if (n.state === "passed")
 			return this.transitionError(run, `node "${node}" already passed`);
 		if (n.state === "failed") {
@@ -328,7 +331,10 @@ export class RunManager {
 		const n = run.nodes[node];
 		if (!n) return this.transitionError(run, `unknown node "${node}"`);
 		if (run.status !== "running")
-			return this.transitionError(run, `run is ${run.status} — no transitions allowed`);
+			return this.transitionError(
+				run,
+				`run is ${run.status} — no transitions allowed`,
+			);
 		if (n.state !== "running" && n.state !== "ready") {
 			return this.transitionError(
 				run,
@@ -347,7 +353,10 @@ export class RunManager {
 
 	async retry(run: RunState, node: string): Promise<TransitionResult> {
 		if (run.status !== "running")
-			return this.transitionError(run, `run is ${run.status} — no transitions allowed`);
+			return this.transitionError(
+				run,
+				`run is ${run.status} — no transitions allowed`,
+			);
 		const res = retryNode(run, node);
 		if (!res.ok) return this.transitionError(run, res.error!);
 		await appendEvent(this.roots, run, "retry", { node });
@@ -366,7 +375,10 @@ export class RunManager {
 		reason?: string,
 	): Promise<TransitionResult> {
 		if (run.status !== "running")
-			return this.transitionError(run, `run is ${run.status} — no transitions allowed`);
+			return this.transitionError(
+				run,
+				`run is ${run.status} — no transitions allowed`,
+			);
 		const res = resolveCheckpoint(run, node, approved, reason);
 		if (!res.ok) return this.transitionError(run, res.error!);
 		await appendEvent(this.roots, run, approved ? "approved" : "rejected", {

@@ -693,7 +693,10 @@ test("B1 regression: loop body is not issued until the owner's needs pass", asyn
 		await m.ingestCalls(run, [call(gate.node, gate.agent, gate.task, "tc-g")]);
 		const c = await m.complete(run, "gate", t.project);
 		assert.ok(c.ok, c.error);
-		assert.ok(c.batch.items.some((i) => i.node === "body"), "body issued after gate");
+		assert.ok(
+			c.batch.items.some((i) => i.node === "body"),
+			"body issued after gate",
+		);
 	} finally {
 		await t.cleanup();
 	}
@@ -706,7 +709,11 @@ test("B2 regression: a ready node (incl. loop body) is never re-issued", async (
 			name: "no-phantom",
 			nodes: {
 				body: { agent: "worker", task: "t" },
-				loop: { agent: "ignored", task: "ignored", loop: { body: "body", maxIterations: 2 } },
+				loop: {
+					agent: "ignored",
+					task: "ignored",
+					loop: { body: "body", maxIterations: 2 },
+				},
 			},
 		});
 		const m = new RunManager({
@@ -727,7 +734,11 @@ test("B2 regression: a ready node (incl. loop body) is never re-issued", async (
 		// re-compute the batch — nothing may be re-issued (B2 phantom)
 		const batch2 = computeBatch(run);
 		assert.equal(batch2.items.length, 0, "ready body must not be re-issued");
-		assert.equal(run.issuedCount, issuedCountBefore, "issuedCount must not inflate");
+		assert.equal(
+			run.issuedCount,
+			issuedCountBefore,
+			"issuedCount must not inflate",
+		);
 	} finally {
 		await t.cleanup();
 	}
@@ -782,8 +793,14 @@ test("H1 regression: an unfinished subagent call (no execution_end) is not attri
 			s.runId!,
 		))!.run;
 		// call observed but execution NOT finished → no attribution
-		await m.ingestCalls(run, [call(d.node, d.agent, d.task, "tc-h1", false, false)]);
-		assert.equal(run.nodes[d.node]!.state, "ready", "unfinished call must not mark running");
+		await m.ingestCalls(run, [
+			call(d.node, d.agent, d.task, "tc-h1", false, false),
+		]);
+		assert.equal(
+			run.nodes[d.node]!.state,
+			"ready",
+			"unfinished call must not mark running",
+		);
 		const c = await m.complete(run, d.node, t.project);
 		assert.ok(!c.ok);
 		assert.match(c.error!, /no execution evidence/);
@@ -817,7 +834,11 @@ test("M1 regression: rejected continueOnError checkpoint does not block dependen
 		// reject the soft checkpoint → dependent must NOT be blocked
 		const rj = await m.resolveCheckpoint(run, "ckpt", false, "skip it");
 		assert.ok(rj.ok);
-		assert.equal(run.nodes["done"]!.state, "queued", "done must stay queued, not blocked");
+		assert.equal(
+			run.nodes["done"]!.state,
+			"queued",
+			"done must stay queued, not blocked",
+		);
 	} finally {
 		await t.cleanup();
 	}
@@ -848,7 +869,10 @@ test("M2 regression: explicit finish list defeats continueOnError", async () => 
 		const f = await m.fail(run, "opt", "intentional");
 		assert.ok(f.ok);
 		const fin = await m.finish(run);
-		assert.ok(!fin.ok, "explicit finish node must fail the workflow even with continueOnError");
+		assert.ok(
+			!fin.ok,
+			"explicit finish node must fail the workflow even with continueOnError",
+		);
 	} finally {
 		await t.cleanup();
 	}
@@ -870,9 +894,20 @@ test("M4 regression: stale invocation (ts < issue time) is not attributed", asyn
 			s.runId!,
 		))!.run;
 		// invocation timestamp BEFORE the node was issued
-		const stale = { toolCallId: "tc-stale", ts: 1, agent: d.agent, task: d.task, isError: false, finished: true };
+		const stale = {
+			toolCallId: "tc-stale",
+			ts: 1,
+			agent: d.agent,
+			task: d.task,
+			isError: false,
+			finished: true,
+		};
 		await m.ingestCalls(run, [stale]);
-		assert.equal(run.nodes[d.node]!.state, "ready", "stale call must not be attributed");
+		assert.equal(
+			run.nodes[d.node]!.state,
+			"ready",
+			"stale call must not be attributed",
+		);
 	} finally {
 		await t.cleanup();
 	}

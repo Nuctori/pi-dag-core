@@ -149,7 +149,12 @@ export class RunManager {
 		// "everything settled" (finish or abort).
 		if (batch.items.length === 0 && batch.notes.length === 0) {
 			const inFlight = Object.entries(run.nodes)
-				.filter(([, n]) => n.state === "ready" || n.state === "running" || n.state === "awaiting_approval")
+				.filter(
+					([, n]) =>
+						n.state === "ready" ||
+						n.state === "running" ||
+						n.state === "awaiting_approval",
+				)
 				.map(([name]) => name);
 			if (inFlight.length > 0) {
 				batch.notes.push(

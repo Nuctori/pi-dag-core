@@ -24,10 +24,28 @@ jobs:
       # The shipped example spec must validate
       - run: node --import tsx tests/example-spec-check.ts
 
-  # REAL-pi smoke: boots an actual pi agent session with dag-core loaded,
-  # driven by a scripted local model (no API key), exercising the real event
-  # stream end-to-end (dag_start → subagent child process → dag_complete →
-  # dag_finish). Requires pi + pi-subagents.
+  # REAL-model E2E (no mock): a local free open model (Ollama qwen3:4b) drives
+  # a genuine pi session through the dag protocol — proves the trigger + the
+  # protocol work with an actual LLM, not a scripted server.
+  real-pi-live-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+      - name: Real-model dag E2E
+        run: bash tests/real-e2e/run-live-e2e.sh
+        env:
+          SMOKE_HOME: ${{ runner.temp }}/live-smoke-home
+        timeout-minutes: 30
+
+  # Scripted-pi smoke (fast, deterministic): real pi runtime + real event
+  # stream, scripted model. Validates the event-shape wiring without an LLM.
   real-pi-smoke:
     runs-on: ubuntu-latest
     steps:

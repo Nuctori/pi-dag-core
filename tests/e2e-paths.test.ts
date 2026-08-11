@@ -518,7 +518,11 @@ test("path 5b: loop exhaustion past maxIterations blocks the workflow", async ()
 		const spec = JSON.stringify({
 			name: "loop-exh",
 			nodes: {
-				body: { agent: "w", task: "Write report.md with FIXED", produces: [{ path: "report.md", check: "grep:FIXED" }] },
+				body: {
+					agent: "w",
+					task: "Write report.md with FIXED",
+					produces: [{ path: "report.md", check: "grep:FIXED" }],
+				},
 				loop: { loop: { body: "body", maxIterations: 2 } },
 				done: { agent: "w", task: "wrap", needs: ["loop"] },
 			},
@@ -533,7 +537,13 @@ test("path 5b: loop exhaustion past maxIterations blocks the workflow", async ()
 			assert.match(res, /artifact evidence failed/);
 		}
 		// loop exhausted → done never issued; finish incomplete
-		const fin = (await tool(pi, "dag_finish").execute("c-f", { runId }, undefined, undefined, { cwd: t.dir })) as {
+		const fin = (await tool(pi, "dag_finish").execute(
+			"c-f",
+			{ runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(fin.content[0]?.text ?? "", /incomplete/);
@@ -557,11 +567,27 @@ test("path 18: explicit finish defeats continueOnError; default inference does n
 		const { runId, text } = await start(pi, t.dir, spec);
 		const opt = firstBatch(text, "opt");
 		await execNode(pi, t.dir, opt);
-		await tool(pi, "dag_fail").execute("c-f", { runId, node: "opt", reason: "soft fail" }, undefined, undefined, { cwd: t.dir });
-		const fin1 = (await tool(pi, "dag_finish").execute("c-f2", { runId }, undefined, undefined, { cwd: t.dir })) as {
+		await tool(pi, "dag_fail").execute(
+			"c-f",
+			{ runId, node: "opt", reason: "soft fail" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		);
+		const fin1 = (await tool(pi, "dag_finish").execute(
+			"c-f2",
+			{ runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
-		assert.match(fin1.content[0]?.text ?? "", /incomplete/, "explicit finish must not pass");
+		assert.match(
+			fin1.content[0]?.text ?? "",
+			/incomplete/,
+			"explicit finish must not pass",
+		);
 
 		// default inference (no finish list): a failed soft leaf does NOT block
 		const pi2 = makePi();
@@ -573,11 +599,27 @@ test("path 18: explicit finish defeats continueOnError; default inference does n
 		const r2 = await start(pi2, t.dir, spec2);
 		const o2 = firstBatch(r2.text, "opt");
 		await execNode(pi2, t.dir, o2);
-		await tool(pi2, "dag_fail").execute("c-f", { runId: r2.runId, node: "opt", reason: "soft fail" }, undefined, undefined, { cwd: t.dir });
-		const fin2 = (await tool(pi2, "dag_finish").execute("c-f2", { runId: r2.runId }, undefined, undefined, { cwd: t.dir })) as {
+		await tool(pi2, "dag_fail").execute(
+			"c-f",
+			{ runId: r2.runId, node: "opt", reason: "soft fail" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		);
+		const fin2 = (await tool(pi2, "dag_finish").execute(
+			"c-f2",
+			{ runId: r2.runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
-		assert.match(fin2.content[0]?.text ?? "", /completed/, "soft leaf must not block finish");
+		assert.match(
+			fin2.content[0]?.text ?? "",
+			/completed/,
+			"soft leaf must not block finish",
+		);
 	} finally {
 		await t.cleanup();
 	}
@@ -592,7 +634,13 @@ test("path 6b: dag_fail tool marks a node failed; retry re-issues it", async () 
 		const a = firstBatch(text, "a");
 		await execNode(pi, t.dir, a);
 		// dag_fail while the node is running/ready
-		const fl = (await tool(pi, "dag_fail").execute("c-fl", { runId, node: "a", reason: "blocked externally" }, undefined, undefined, { cwd: t.dir })) as {
+		const fl = (await tool(pi, "dag_fail").execute(
+			"c-fl",
+			{ runId, node: "a", reason: "blocked externally" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(fl.content[0]?.text ?? "", /marked failed/);
@@ -600,7 +648,13 @@ test("path 6b: dag_fail tool marks a node failed; retry re-issues it", async () 
 		const refused = await complete(pi, t.dir, runId, "a");
 		assert.match(refused, /failed/);
 		// retry → re-issued → pass
-		const rt = (await tool(pi, "dag_retry").execute("c-rt", { runId, node: "a" }, undefined, undefined, { cwd: t.dir })) as {
+		const rt = (await tool(pi, "dag_retry").execute(
+			"c-rt",
+			{ runId, node: "a" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(rt.content[0]?.text ?? "", /re-issued/);
@@ -620,7 +674,10 @@ test("command edges: unknown run / non-checkpoint approve / bad node are refused
 
 		const noRun = await pi.runCommand("status run-does-not-exist", t.dir);
 		assert.match(noRun[0]?.text ?? "", /not found/);
-		const noRunApprove = await pi.runCommand("approve run-does-not-exist approve", t.dir);
+		const noRunApprove = await pi.runCommand(
+			"approve run-does-not-exist approve",
+			t.dir,
+		);
 		assert.match(noRunApprove[0]?.text ?? "", /not found/);
 
 		// approve a non-checkpoint node (discover, not awaiting) → refused
@@ -640,14 +697,45 @@ test("edge: resuming a completed run is refused", async () => {
 		const a = firstBatch(text, "a");
 		await execNode(pi, t.dir, a, { artifacts: { "a.md": "content" } });
 		await complete(pi, t.dir, runId, "a");
-		await tool(pi, "dag_finish").execute("c-f", { runId }, undefined, undefined, { cwd: t.dir });
+		await tool(pi, "dag_finish").execute(
+			"c-f",
+			{ runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		);
 
 		const pi2 = makePi();
 		await bootExtension(pi2, t.dir);
-		const resumeRes = (await tool(pi2, "dag_start").execute("c-rs", { resumeRunId: runId }, undefined, undefined, { cwd: t.dir })) as {
+		const resumeRes = (await tool(pi2, "dag_start").execute(
+			"c-rs",
+			{ resumeRunId: runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as {
 			content: { type: string; text: string }[];
 		};
 		assert.match(resumeRes.content[0]?.text ?? "", /not resumable/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("trigger: resources_discover registers the dag-workflow skill", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const res = (await pi.emit("resources_discover", { reason: "startup" })) as {
+			skillPaths?: string[];
+		};
+		const dirs = res?.skillPaths ?? [];
+		assert.ok(dirs.length === 1, `expected one skill dir, got ${dirs.length}`);
+		// the skill file must exist under the advertised path
+		const skill = join(dirs[0]!, "dag-workflow", "SKILL.md");
+		const stat = await import("node:fs/promises").then((m) => m.stat(skill));
+		assert.ok(stat.isFile(), `SKILL.md not found at ${skill}`);
 	} finally {
 		await t.cleanup();
 	}

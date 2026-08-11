@@ -16,6 +16,7 @@
  *   inject— tool-usage guidelines only
  *   block — never (no interception, no mutation, no result rewriting)
  */
+import { fileURLToPath } from "node:url";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -100,6 +101,15 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		buffer = [];
+	});
+
+	// Trigger mechanism: ship the dag-workflow SKILL with the extension so the
+	// model has a WHEN-to-use reference it can self-activate from (the skill
+	// description is the trigger surface; the 5 protocol guidelines cover HOW).
+	pi.on("resources_discover", async () => {
+		return {
+			skillPaths: [fileURLToPath(new URL("../skills", import.meta.url))],
+		};
 	});
 
 	/* ------------------------------------------------------------------ */
@@ -198,6 +208,10 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 		promptSnippet:
 			"Start a DAG workflow; returns the ready batch to execute via subagent",
 		promptGuidelines: [
+			// WHEN to use dag_start (the trigger), not just HOW
+			"Use dag_start when the task decomposes into multiple dependent stages needing verification or gates — parallel research → synthesis → review/fix loop, or any flow where order, re-runs and auditability matter (see the dag-workflow skill for the decision rule).",
+			"For a single focused task use subagent directly; for independent parallel tasks use subagent tasks[] without dag; for a simple 2-3 step chain use subagent chain — dag-core adds overhead that only pays off for enforced multi-stage flows.",
+			// HOW (protocol)
 			"Use dag_start to begin a workflow. It returns a ready batch: call subagent exactly as specified (same agent and task, no edits).",
 			"After each node's subagent call, call dag_complete with the node name; a node becomes passed only through dag_complete.",
 			"If dag_complete marks a node failed, re-run it with dag_retry; never treat a node as done by any other means.",

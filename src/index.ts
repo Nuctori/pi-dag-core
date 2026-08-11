@@ -49,7 +49,10 @@ interface CapturedCall {
 
 /** Batch → human-readable payload block the AI must execute verbatim. */
 function renderBatch(batch: ReadyBatch): string {
-	if (batch.items.length === 0) return "(no ready nodes)";
+	if (batch.items.length === 0) {
+		// P1b: surface guidance notes (run in flight / settled / failFast / maxAgents)
+		return batch.notes.length > 0 ? batch.notes.join("\n") : "(no ready nodes)";
+	}
 	// NOTE: `task` ALREADY carries the {artifacts} fan-in injection (done in
 	// nodePayload at issue time) — do NOT append depArtifacts again, or the
 	// rendered payload won't match the issuedTask and attribution fails.

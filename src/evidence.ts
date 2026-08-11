@@ -17,8 +17,8 @@
  * the AI cannot fabricate evidence because the core watched the real call.
  */
 import { createHash } from "node:crypto";
-import { readFile, stat, realpath } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { readFile, stat, realpath, readdir } from "node:fs/promises";
+import { resolve, sep, join } from "node:path";
 import type {
 	ArtifactEvidence,
 	NodeSpec,
@@ -197,9 +197,26 @@ export async function checkArtifacts(
 				evidence.push(entry);
 				continue;
 			}
-			// a directory is not a "nonEmpty file" — only regular files count
-			entry.nonEmpty = st.isFile() && st.size > 0;
-			entry.mtimeAfterIssue = st.mtimeMs >= issuedAt;
+			// P0: directories are legitimate artifacts. nonEmpty = the directory
+			// has entries; freshness = at least one entry was written after the
+			// node was issued (the dir's own mtime predates the run).
+			if (st.isDirectory()) {
+				const entries = await readdir(abs);
+				entry.nonEmpty = entries.length > 0;
+				let newest = 0;
+				for (const name of entries) {
+					try {
+						const es = await stat(join(abs, name));
+						if (es.mtimeMs > newest) newest = es.mtimeMs;
+					} catch {
+						// ignore unreadable entries
+					}
+				}
+				entry.mtimeAfterIssue = newest >= issuedAt;
+			} else {
+				entry.nonEmpty = st.size > 0;
+				entry.mtimeAfterIssue = st.mtimeMs >= issuedAt;
+			}
 			if (st.isFile() && st.size <= HASH_CAP) {
 				const buf = await readFile(abs);
 				const hash = sha256(buf);
@@ -243,7 +260,6 @@ export async function checkArtifacts(
 			entry.detail = "written before the node was issued (stale artifact)";
 			ok = false;
 		}
-		evidence.push(entry);
 		evidence.push(entry);
 	}
 	return { ok, hashes, evidence };

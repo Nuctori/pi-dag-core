@@ -187,7 +187,9 @@ function validateGraph(s: Spec): ValidationIssue[] {
 
 		// produces path safety (prevent artifact checks escaping the project):
 		// reject absolute paths (POSIX + Windows drive letters), traversal,
-		// backslashes, and drive-relative forms (M5).
+		// backslashes, and drive-relative forms (M5). P1a: teach the fix —
+		// the AI in practice writes absolute Windows paths and never self-corrects.
+		const seenProduce = new Set<string>();
 		for (const a of n.produces ?? []) {
 			if (
 				a.path.startsWith("/") ||
@@ -196,8 +198,21 @@ function validateGraph(s: Spec): ValidationIssue[] {
 				/^[a-zA-Z]:[\\/]/.test(a.path) ||
 				/^[a-zA-Z]:/.test(a.path)
 			) {
-				issue(issues, `${p}.produces`, `unsafe artifact path "${a.path}"`);
+				issue(
+					issues,
+					`${p}.produces`,
+					`unsafe artifact path "${a.path}" — use a path relative to the project root (e.g. "critiques/infotheory.md", not "D:/node/follow_me/critiques/infotheory.md")`,
+				);
 			}
+			// P2: duplicate produce paths within one node → duplicate evidence
+			if (seenProduce.has(a.path)) {
+				issue(
+					issues,
+					`${p}.produces`,
+					`duplicate produces path "${a.path}" within node "${name}" — declare it once`,
+				);
+			}
+			seenProduce.add(a.path);
 			// L4: keep grep patterns bounded (ReDoS / accidental megabyte regexes)
 			if (a.check?.startsWith("grep:") && a.check.length > 220) {
 				issue(

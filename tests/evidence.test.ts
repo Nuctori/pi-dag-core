@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -124,6 +124,35 @@ test("checkArtifacts: exists/nonEmpty/grep/mtime/symlink-escape", async () => {
 		assert.equal(byPath.get("approved.md")!.grepMatch, true);
 		assert.equal(byPath.get("missing.md")!.exists, false);
 		assert.ok(res.hashes["ok.md"], "sha256 recorded");
+		// P0-regression: no duplicate evidence entries (the real bug that made
+		// IMPLEMENTATION.md appear twice in follow_me sessions)
+		assert.equal(res.evidence.length, 3);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("P0: directories are valid artifacts — nonEmpty = has entries, fresh = new entry", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "dag-evidence-dir-"));
+	try {
+		const specNode: NodeSpec = {
+			agent: "w",
+			task: "t",
+			produces: [{ path: "src/", check: "nonEmpty" }],
+		};
+		const issuedAt = Date.now();
+		// stale dir (created before issue, no new entries) → fails freshness
+		await mkdir(join(dir, "src"));
+		let res = await checkArtifacts(dir, specNode, issuedAt);
+		assert.equal(res.ok, false, "empty dir must fail nonEmpty");
+		// write an entry AFTER issue → passes
+		await new Promise((r) => setTimeout(r, 5));
+		await writeFile(join(dir, "src", "index.js"), "x");
+		res = await checkArtifacts(dir, specNode, issuedAt);
+		assert.equal(res.ok, true, "dir with a fresh entry must pass");
+		const e = res.evidence[0]!;
+		assert.equal(e.nonEmpty, true);
+		assert.equal(e.mtimeAfterIssue, true);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

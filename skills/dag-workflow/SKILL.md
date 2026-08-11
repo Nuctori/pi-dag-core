@@ -64,5 +64,8 @@ AI 编排 → 人批准 → 按契约执行。执行走内置 `subagent`，核�
 ## 沙盒规则
 
 - 写入只落在 `.pi/workflows/`（定义）+ `runs/`（运行态），不碰其他文件
-- 产物证据 = 文件存在/新鲜/sha256，机器不防"执行者篡改自己状态文件"
+- **`produces` 路径必须相对项目根**（如 `critiques/infotheory.md`），绝不用绝对路径（`D:/...` 会被拒）——这是真实使用中 AI 反复犯的错误
+- **目录也是合法产物**：`produces: [{ path: "src/", check: "nonEmpty" }]` 表示目录内有内容
+- 产物证据 = 文件/目录存在、签发后有写入、sha256；机器不防"执行者篡改自己状态文件"
+- **run 已激活时不要重复 dag_start**：返回空批 = run 在途（用 dag_complete/dag_retry 继续）或已完结（dag_finish/dag_abort）
 - 模板示例：`examples/code-review.json`（并行审查→verifier→修复循环→人工门）

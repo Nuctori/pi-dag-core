@@ -144,6 +144,23 @@ export class RunManager {
 		});
 
 		const batch = computeBatch(run);
+		// P1b: an empty batch without notes leaves the AI guessing. Distinguish
+		// "run already in flight" (continue with dag_complete/dag_retry) from
+		// "everything settled" (finish or abort).
+		if (batch.items.length === 0 && batch.notes.length === 0) {
+			const inFlight = Object.entries(run.nodes)
+				.filter(([, n]) => n.state === "ready" || n.state === "running" || n.state === "awaiting_approval")
+				.map(([name]) => name);
+			if (inFlight.length > 0) {
+				batch.notes.push(
+					`run already active — nodes in flight: ${inFlight.join(", ")}. Continue with dag_complete(runId, node) / dag_retry / /dag approve; dag_start only starts NEW runs.`,
+				);
+			} else {
+				batch.notes.push(
+					"no issuable nodes — all nodes passed or failed. Call dag_finish (if all required passed) or dag_abort.",
+				);
+			}
+		}
 		await persistRun(this.roots, run);
 		return { ok: true, runId, scope, status: run.status, batch };
 	}

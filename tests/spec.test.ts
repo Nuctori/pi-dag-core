@@ -119,6 +119,39 @@ test("M5: Windows drive-letter artifact paths are rejected", () => {
 	}
 });
 
+test("P1a: unsafe path message teaches the fix (relative path)", () => {
+	const bad = JSON.stringify({
+		name: "x",
+		nodes: {
+			a: {
+				agent: "w",
+				task: "t",
+				produces: [{ path: "D:/node/follow_me/critiques/ai.md" }],
+			},
+		},
+	});
+	const msg = issuesOf(bad).join(" ");
+	assert.match(msg, /relative to the project root/);
+	assert.match(msg, /critiques\/ai\.md/);
+});
+
+test("P2: duplicate produces path within one node is rejected", () => {
+	const bad = JSON.stringify({
+		name: "x",
+		nodes: {
+			a: {
+				agent: "w",
+				task: "t",
+				produces: [
+					{ path: "IMPLEMENTATION.md", check: "nonEmpty" },
+					{ path: "IMPLEMENTATION.md", check: "nonEmpty" },
+				],
+			},
+		},
+	});
+	assert.match(issuesOf(bad).join(" "), /duplicate produces path/);
+});
+
 test("M9: gate field is rejected in v0 (not enforced)", () => {
 	const bad = JSON.stringify({
 		name: "x",

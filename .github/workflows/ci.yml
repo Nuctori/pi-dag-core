@@ -44,11 +44,16 @@ jobs:
           ZEN_API_KEY: ${{ secrets.ZEN_API_KEY }}
         timeout-minutes: 20
 
-  # Zero-key REAL-model E2E: local Ollama (free, open, no login) runs ON the
-  # runner and drives the dag protocol with a genuine LLM. Slow (CPU) but
-  # requires nothing from the user — the honest zero-auth proof.
+  # Zero-key REAL-model probe: local Ollama (free, open, no login) runs ON the
+  # runner. MANUAL-ONLY (workflow_dispatch): observed outcome is that ≤4B local
+  # models (phi4-mini, qwen3:4b) understand the dag protocol but do not
+  # reliably EXECUTE custom tools — they emit explanations instead of tool
+  # calls. So this job is a diagnostic probe, not a green gate. Real-model E2E
+  # proof requires a cloud model (Zen/Gemini free key) or ≥8B local (CPU too
+  # slow for CI budgets).
   real-pi-live-e2e-local:
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -58,12 +63,11 @@ jobs:
       - run: npm ci
       - name: Install Ollama
         run: curl -fsSL https://ollama.com/install.sh | sh
-      - name: Real-model dag E2E (Ollama, no key)
+      - name: Real-model dag probe (Ollama, no key, diagnostic)
         run: bash tests/real-e2e/run-live-e2e-local.sh
         env:
           SMOKE_HOME: ${{ runner.temp }}/live-smoke-local
         timeout-minutes: 30
-
   # Scripted-pi smoke (fast, deterministic): real pi runtime + real event
   # stream, scripted model. Validates the event-shape wiring without an LLM.
   real-pi-smoke:

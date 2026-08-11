@@ -727,7 +727,9 @@ test("trigger: resources_discover registers the dag-workflow skill", async () =>
 	try {
 		const pi = makePi();
 		await bootExtension(pi, t.dir);
-		const res = (await pi.emit("resources_discover", { reason: "startup" })) as {
+		const res = (await pi.emit("resources_discover", {
+			reason: "startup",
+		})) as {
 			skillPaths?: string[];
 		};
 		const dirs = res?.skillPaths ?? [];

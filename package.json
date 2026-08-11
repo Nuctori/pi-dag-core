@@ -8,7 +8,7 @@
   "pi": {
     "extensions": ["./src/index.ts"]
   },
-  "files": ["src", "examples", "README.md", "DESIGN.md"],
+  "files": ["src", "skills", "examples", "README.md", "DESIGN.md", "LICENSE"],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",

@@ -44,6 +44,26 @@ jobs:
           ZEN_API_KEY: ${{ secrets.ZEN_API_KEY }}
         timeout-minutes: 20
 
+  # Zero-key REAL-model E2E: local Ollama (free, open, no login) runs ON the
+  # runner and drives the dag protocol with a genuine LLM. Slow (CPU) but
+  # requires nothing from the user — the honest zero-auth proof.
+  real-pi-live-e2e-local:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+      - name: Real-model dag E2E (Ollama, no key)
+        run: bash tests/real-e2e/run-live-e2e-local.sh
+        env:
+          SMOKE_HOME: ${{ runner.temp }}/live-smoke-local
+        timeout-minutes: 30
+
   # Scripted-pi smoke (fast, deterministic): real pi runtime + real event
   # stream, scripted model. Validates the event-shape wiring without an LLM.
   real-pi-smoke:

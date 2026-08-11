@@ -14,8 +14,8 @@ export LIVE_MODEL="${LIVE_MODEL:-deepseek-v4-flash-free}"
 OUT="$SMOKE_HOME/live-e2e.out"
 
 if [ -z "${ZEN_API_KEY:-}" ]; then
-  echo "=== LIVE-E2E SKIPPED: ZEN_API_KEY not set — add the OpenCode Zen free-tier key as a GitHub secret ==="
-  exit 0 # not a failure; the job documents itself without the secret
+	echo "=== LIVE-E2E SKIPPED: ZEN_API_KEY not set — add the OpenCode Zen free-tier key as a GitHub secret ==="
+	exit 0 # not a failure; the job documents itself without the secret
 fi
 
 echo "== install pi + pi-subagents into smoke HOME =="
@@ -38,14 +38,17 @@ tail -30 "$OUT"
 echo "== assert workflow completed =="
 RUN_DIR="$(find "$SMOKE_HOME/.pi/agent/workflows/runs" -name events.jsonl 2>/dev/null | head -1)"
 if [ -z "$RUN_DIR" ]; then
-  echo "=== LIVE-E2E FAILED: no run state produced ==="
-  echo "--- assistant tool sequence (what the model actually did) ---"
-  grep -o '"toolName":"[a-z_]*"' "$OUT" | sort | uniq -c || true
-  exit 1
+	echo "=== LIVE-E2E FAILED: no run state produced ==="
+	echo "--- assistant tool sequence (what the model actually did) ---"
+	grep -o '"toolName":"[a-z_]*"' "$OUT" | sort | uniq -c || true
+	exit 1
 fi
 EVENTS=$(grep -o '"type":"[a-z]*"' "$RUN_DIR" | sed 's/"type":"//;s/"//' | tr '\n' ' ')
 echo "events: $EVENTS"
 case "$EVENTS" in
-  *start*executed*passed*finish*) echo "=== LIVE-E2E PASSED ===" ;;
-  *) echo "=== LIVE-E2E FAILED: incomplete event chain: $EVENTS ==="; exit 1 ;;
+*start*executed*passed*finish*) echo "=== LIVE-E2E PASSED ===" ;;
+*)
+	echo "=== LIVE-E2E FAILED: incomplete event chain: $EVENTS ==="
+	exit 1
+	;;
 esac

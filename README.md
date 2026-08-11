@@ -13,6 +13,50 @@ AI 生成 spec ──► dag_start 校验+签发就绪批 ──► AI 逐字调
           │ passed → 签发下一批 / failed → 卡死，只能 dag_retry 或回人
 ```
 
+## 长什么样（真实输出，非手绘）
+
+`examples/code-review.json`（并行审查 → verifier 扇入 → 修复循环 → 人工门）经真实代码路径渲染：
+
+```mermaid
+flowchart TD
+    discover[discover]
+    api-review[api-review]
+    test-review[test-review]
+    synthesis[synthesis]
+    discover --> synthesis
+    api-review --> synthesis
+    test-review --> synthesis
+    fix-loop((fix-loop — loop))
+    synthesis --> fix-loop
+    fix-loop -. body .-> fix-body
+    fix-body[fix-body]
+    approve[⏸ approve — checkpoint]
+    fix-loop --> approve
+    done[done]
+    approve --> done
+    classDef run fill:#dbeafe;
+    class discover,api-review,test-review run;
+    classDef idle fill:#f3f4f6;
+    class synthesis,fix-loop,fix-body,approve,done idle;
+```
+
+`/dag graph` 文本视图（同一时刻）：
+
+```text
+run run-example [project] — running — spec "code-review-pipeline"
+
+  ▶ discover
+  ▶ api-review
+  ▶ test-review
+  · synthesis (verifier) ← discover, api-review, test-review
+  · fix-loop (loop→fix-body) ← synthesis
+  · fix-body
+  · approve (checkpoint) ← fix-loop
+  · done ← approve
+```
+
+蓝色 = 已签发（ready），`⏸` = 等待人工批准，`←` = 依赖边，`(loop→body)` = 循环包装。
+
 ## 设计哲学（先读这里，判断要不要用）
 
 **一句话**：这不是又一个"更聪明的 agent 框架"，而是一个**给已信任的 AI 加的可验证流程层**。它不提高 AI 的能力，它约束 AI 的执行秩序并让你看得见。

@@ -47,12 +47,13 @@ export function renderMermaid(run: RunState): string {
 	const lines: string[] = ["```mermaid", "flowchart TD"];
 	for (const name of Object.keys(run.spec.nodes)) {
 		const specN = run.spec.nodes[name]!;
-		const label = specN.checkpoint
-			? `${name}[⏸ ${name} — checkpoint]`
+		// mermaid: first token = node id, bracket content = label — never repeat the name
+		const body = specN.checkpoint
+			? `[⏸ ${name} — checkpoint]`
 			: specN.loop
-				? `${name}((${name} — loop))`
-				: `${name}[${name}]`;
-		lines.push(`    ${name}${label}`);
+				? `((${name} — loop))`
+				: `[${name}]`;
+		lines.push(`    ${name}${body}`);
 		for (const d of specN.needs ?? []) lines.push(`    ${d} --> ${name}`);
 		if (specN.loop) lines.push(`    ${name} -. body .-> ${specN.loop.body}`);
 	}

@@ -52,16 +52,18 @@ AI 生成 spec ──► dag_start 校验+签发就绪批 ──► AI 逐字调
 ## 安装
 
 ```bash
-# 方式一：作为 pi 扩展加载（开发）
-git clone https://github.com/your-org/pi-dag-core ~/pi-dag-core
-pi -e ~/pi-dag-core/src/index.ts
+# 方式一（推荐，社区安装）：
+pi install npm:pi-dag-core
 
-# 方式二：放到扩展目录（常驻）
-#   ~/.pi/agent/extensions/pi-dag-core/   （用户级）
-#   .pi/extensions/pi-dag-core/           （项目级，需信任项目）
+# 方式二：git 安装
+pi install git:github.com/Nuctori/pi-dag-core
+
+# 方式三：本地开发（-e 临时加载）
+git clone https://github.com/Nuctori/pi-dag-core ~/pi-dag-core
+pi -e ~/pi-dag-core/src/index.ts
 ```
 
-依赖：`typebox`（运行时唯一依赖）+ `@earendil-works/pi-coding-agent`（peer）+ **`subagent` 工具提供者（pi-subagents）**。零编译，jiti 直接加载 TS。
+依赖：`subagent` 工具提供者（pi-subagents）——`pi install npm:pi-subagents`。typebox 与 pi 核心包由 pi 自带（peer 声明）。装完 `/reload`。
 
 ## 三个作用域
 

@@ -28,7 +28,7 @@ mkdir -p "$SMOKE_HOME/.pi/agent/extensions"
 cp -r "$ROOT/src" "$SMOKE_HOME/.pi/agent/extensions/pi-dag-core"
 cp "$ROOT/tests/real-e2e/ollama-provider.ts" "$SMOKE_HOME/.pi/agent/extensions/ollama-provider.ts"
 
-PROMPT='多阶段任务，适合用 dag 编排：1) 并行读取本目录的 README.md 和 src/cli.js 两个文件（各一个节点，产物各自写 summary-a.md / summary-b.md），2) 汇总节点交叉验证并写 NOTES.md（内容包含 VERIFIED），3) 完成工作流。请用 dag_start 生成 spec（produces 必须用相对路径），逐字执行返回的批，dag_complete，最后 dag_finish。'
+PROMPT='pi 会话里有一个名为 dag_start 的 TOOL（不是 Airflow，不是图论库）。任务：读取本目录 README.md 的内容，用 dag_start 工具启动一个单节点工作流（spec 里一个节点，agent 用 "scout"，task 写"读取 README.md 并写 summary.md"，produces 用相对路径 summary.md，check 用 nonEmpty）。然后：调用 subagent 工具（参数必须逐字使用 dag_start 返回的 agent 和 task）→ 调用 dag_complete（runId 和 node 用 dag_start 返回的）→ 最后调用 dag_finish。严格按 dag_start 返回的批执行，不要自行发挥。'
 
 echo "== run REAL pi with $LIVE_MODEL (local CPU, no mock, no key) =="
 set +e

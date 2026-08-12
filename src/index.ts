@@ -23,7 +23,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { RunManager } from "./core.js";
-import { normalizeInvocations } from "./evidence.js";
+import { firstDiff, normalizeInvocations } from "./evidence.js";
 import {
 	defaultRoots,
 	listDefinitions,
@@ -289,12 +289,44 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 					requireRoots();
 					const run = await loadRun(params.runId);
 					if ("error" in run) return ok(`dag_complete rejected: ${run.error}`);
+					// Snapshot observed (finished) subagent calls BEFORE
+					// ingestAndDrain empties the buffer, so a rejection can show
+					// the agent exactly why attribution failed (near-miss diff).
+					const observed = buffer
+						.filter((b) => b.finished)
+						.map((b) => ({
+							toolCallId: b.toolCallId,
+							input: b.input as { agent?: unknown; task?: unknown },
+						}));
 					await ingestAndDrain(run);
 					const res = await manager.complete(run, params.node, ctx.cwd);
-					if (!res.ok)
-						return ok(
-							`dag_complete rejected for "${params.node}":\n${res.error}`,
-						);
+					if (!res.ok) {
+						let err = res.error ?? "rejected";
+						if (err.includes("no execution evidence")) {
+							const specNode = run.spec.nodes[params.node];
+							const issued =
+								run.nodes[params.node]?.issuedTask ?? specNode?.task;
+							const mine = observed.filter(
+								(o) =>
+									specNode &&
+									typeof o.input.agent === "string" &&
+									o.input.agent === specNode.agent &&
+									typeof o.input.task === "string",
+							);
+							if (issued && mine.length > 0) {
+								const diag = mine
+									.map((o) => {
+										const d = firstDiff(issued, o.input.task as string);
+										return d
+											? `  subagent call ${o.toolCallId} (${o.input.agent}): ${d.replaceAll("\n", "\n  ")}`
+											: `  subagent call ${o.input.agent} ${o.toolCallId}: task matches issued payload but was not attributed (check agent name / issue time)`;
+									})
+									.join("\n");
+								err += `\n\nObserved subagent calls that did not attribute:\n${diag}\n`;
+							}
+						}
+						return ok(`dag_complete rejected for "${params.node}":\n${err}`);
+					}
 					const batchText = renderBatch(res.batch);
 					const evidence = res.evidenceReport
 						? `\nArtifact evidence:\n${res.evidenceReport}`

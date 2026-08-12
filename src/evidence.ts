@@ -93,6 +93,41 @@ export interface Attribution {
 }
 
 /**
+ * Normalize a task string for attribution comparison.
+ *
+ * The AI re-emits the issued task when calling subagent, and LLM tokenizers
+ * routinely swap quote glyphs ('x' → "x", 'x' → 'x') and collapse whitespace
+ * runs. Those edits are semantically invisible — treat them as equal. ANY
+ * other difference (added/removed words, reordering, truncation) stays a
+ * mismatch, so the cannot-fabricate property of payload matching is intact.
+ */
+export function normalizeTask(s: string): string {
+	return s.replace(/[''""]/g, '"').replace(/\s+/g, " ");
+}
+
+/**
+ * Locate the first meaningful difference between an issued task and the
+ * observed subagent task, for diagnostics. Returns a compact line, or null
+ * when the two match under normalizeTask.
+ */
+export function firstDiff(expected: string, actual: string): string | null {
+	const a = normalizeTask(expected);
+	const b = normalizeTask(actual);
+	if (a === b) return null;
+	const n = Math.min(a.length, b.length);
+	for (let i = 0; i < n; i++) {
+		if (a[i] !== b[i]) {
+			return (
+				`task differs at char ${i}: expected ${JSON.stringify(a[i])}, observed ${JSON.stringify(b[i])}\n` +
+				`  expected …${a.slice(Math.max(0, i - 24), i + 40)}…\n` +
+				`  observed …${b.slice(Math.max(0, i - 24), i + 40)}…`
+			);
+		}
+	}
+	return `task length differs: expected ${a.length} chars, observed ${b.length}`;
+}
+
+/**
  * Match captured invocations against pending issued payloads.
  * Deterministic: an invocation is attributed to the earliest-issued pending
  * node whose agent+task match exactly AND whose timestamp is not before the
@@ -113,11 +148,12 @@ export function attributeInvocations(
 		// Parallel tasks share one toolCallId; dedupe is by (toolCallId, agent, task).
 		const key = `${inv.toolCallId}|${inv.agent}|${inv.task}`;
 		if (consumed.has(key)) continue;
+		const normTask = normalizeTask(inv.task);
 		const match = pool.find(
 			(p) =>
 				!consumed.has(p.node) &&
 				p.agent === inv.agent &&
-				p.task === inv.task &&
+				normalizeTask(p.task) === normTask &&
 				inv.ts >= p.issuedAt, // M4: no stale attribution
 		);
 		if (!match) continue;

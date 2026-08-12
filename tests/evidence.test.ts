@@ -13,6 +13,7 @@ import {
 	attributeInvocations,
 	parseCheck,
 	checkArtifacts,
+	firstDiff,
 } from "../src/evidence.js";
 import type { NodeSpec } from "../src/types.js";
 
@@ -85,6 +86,65 @@ test("attributeInvocations: matches by agent+task, respects issue order and stal
 	const attrs = attributeInvocations(pending, [one], consumed);
 	assert.equal(attrs.length, 1);
 	assert.equal(attrs[0]!.node, "a");
+});
+
+test("attributeInvocations: quote/whitespace drift is tolerated (LLM re-emission)", () => {
+	// Real failure from D:\node\follow_me sessions (iter33): the issued task
+	// used 'single quotes', the subagent call re-emitted them as "double
+	// quotes" — verbatim matching rejected it 6 times until dag_abort.
+	const issued =
+		"只读审计（cwd=D:/node/codeaudit）。fix-audit 曾记'A1 站数抬到 600+'，实测 970。任务：枚举调用点。";
+	const reemitted = issued.replaceAll("'", '"').replaceAll("  ", " ");
+	const pending = [
+		{ node: "audit", agent: "scout", task: issued, issuedAt: 100 },
+	];
+	const consumed = new Set<string>();
+	const attrs = attributeInvocations(
+		pending,
+		[
+			{
+				toolCallId: "t1",
+				ts: 200,
+				agent: "scout",
+				task: reemitted,
+				isError: false,
+				finished: true,
+			},
+		],
+		consumed,
+	);
+	assert.equal(attrs.length, 1);
+	assert.equal(attrs[0]!.node, "audit");
+});
+
+test("attributeInvocations: substantive edit (added words) still not attributed", () => {
+	const pending = [
+		{ node: "audit", agent: "scout", task: "T do the thing", issuedAt: 100 },
+	];
+	const consumed = new Set<string>();
+	const attrs = attributeInvocations(
+		pending,
+		[
+			{
+				toolCallId: "t1",
+				ts: 200,
+				agent: "scout",
+				task: 'T do "the" thing and more',
+				isError: false,
+				finished: true,
+			},
+		],
+		consumed,
+	);
+	assert.equal(attrs.length, 0);
+});
+
+test("firstDiff: locates the first meaningful divergence with context", () => {
+	assert.equal(firstDiff("abc 'def' ghi", 'abc "def" ghi'), null); // quote-only drift
+	const d = firstDiff("abc def ghi", "abc xyz ghi");
+	assert.ok(d && d.includes("char 4"), d ?? "");
+	assert.ok(d && d.includes("expected"), d ?? "");
+	assert.equal(firstDiff("same text", "same text"), null);
 });
 
 test("parseCheck: valid and invalid forms", () => {

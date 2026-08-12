@@ -64,7 +64,8 @@ AI 编排 → 人批准 → 按契约执行。执行走内置 `subagent`，核�
 ## 沙盒规则
 
 - 写入只落在 `.pi/workflows/`（定义）+ `runs/`（运行态），不碰其他文件
-- **`produces` 路径必须相对项目根**（如 `critiques/infotheory.md`），绝不用绝对路径（`D:/...` 会被拒）——这是真实使用中 AI 反复犯的错误
+- **`produces` 路径相对 run 项目根（= pi 会话的 `ctx.cwd`）解析**，如 `critiques/infotheory.md` → `<项目根>/critiques/infotheory.md`；绝不用绝对路径（`D:/...` 会被拒）——这是真实使用中 AI 反复犯的错误
+- **跨目录陷阱**：task 文本若声明在其他目录操作（如 `cwd=J:/.../InitDeity`），worker 会把产物写进那个目录，而证据闸只查 run 项目根 → MISSING（重试也救不了）。修法：task 里把产物目标写成项目根下的绝对路径，或要求 worker 写完把产物复制回项目根
 - **目录也是合法产物**：`produces: [{ path: "src/", check: "nonEmpty" }]` 表示目录内有内容
 - 产物证据 = 文件/目录存在、签发后有写入、sha256；机器不防"执行者篡改自己状态文件"
 - **run 已激活时不要重复 dag_start**：返回空批 = run 在途（用 dag_complete/dag_retry 继续）或已完结（dag_finish/dag_abort）

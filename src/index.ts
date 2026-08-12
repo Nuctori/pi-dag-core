@@ -63,7 +63,7 @@ function renderBatch(batch: ReadyBatch): string {
 }
 
 const PROTOCOL =
-	"Protocol: execute the batch items above by calling subagent with the EXACT agent and task (no edits), then report each with dag_complete. Never mark a node passed by other means.";
+	"Protocol: execute the batch items above by calling subagent with the EXACT agent and task (no edits), then report each with dag_complete. Never mark a node passed by other means. Note: produces paths resolve relative to the session cwd (project root) — if a task tells the subagent to work in another directory, the produced files must still be written (or copied) back under the project root, or the artifact gate reports MISSING.";
 
 export default function dagCoreExtension(pi: ExtensionAPI) {
 	let roots: Roots;

@@ -162,6 +162,7 @@ pi -e ~/pi-dag-core/src/index.ts
 - **loop 是节点属性**：静态图保持无环；`loop: { body, until: "passed", maxIterations }`，body 反复执行直到产物过闸，第 N 次尝试失败即耗竭（`maxIterations` 硬顶，不靠 AI 数数）
 - `continueOnError: true` 的节点失败不阻塞下游；`failFast`（默认）在首个失败后冻结新签发
 - `maxAgents` 策略：卡**签发数**（= 本 run 最多消耗的 subagent 调用数），超限的节点不签发
+- `stallAfterSec`（默认 600）：AI 被别的问题吸引、run 无进展时的**只读停滞提醒**——超过阈值未启动（ready）或未 complete（running）的节点显示在 dag 工具结果与 `/dag status` 的 Stalled 段（含精确下一步；已观察到 subagent 调用会提示补 dag_complete 而非重跑）。**不失败/不重试/不过期**：随时可恢复；`awaiting_approval` 人工闸永不判停滞
 
 ## 架构
 
@@ -192,10 +193,10 @@ src/
 ## 测试
 
 ```bash
-npm run check   # tsc --noEmit + node --test（65 用例：46 单元/对抗 + 19 适配层 E2E 全用户路径）
+npm run check   # tsc --noEmit + node --test（79 用例：单测/对抗 + 适配层 E2E 全用户路径）
 npm test        # 仅跑测试
 ```
 
-对抗场景覆盖：跳步（无执行即 complete）、改 payload、假产物、过期产物、提前 finish、循环耗竭、maxAgents 超限、并行 `tasks[]` 归因、continueOnError、subagent isError、路径逃逸、盘符/符号链接逃逸、陈旧事件、checkpoint 拒绝语义。
+对抗场景覆盖：跳步（无执行即 complete）、改 payload、假产物、过期产物、提前 finish（含未执行即 dag_fail 的 continueOnError 节点在 finish 报告中标记 never executed）、循环耗竭、maxAgents 超限、并行 `tasks[]` 归因、continueOnError、subagent isError、路径逃逸、盘符/符号链接逃逸、陈旧事件、checkpoint 拒绝语义、停滞判定（ready/running 超时；人工闸与循环 owner 永不判停滞）。
 
 真实 pi 冒烟（CI `real-pi-smoke` job）：安装真实 pi + pi-subagents，用脚本化本地模型驱动真实会话跑通完整协议（dag_start → 真实 subagent 子进程 → dag_complete → dag_finish），断言 `SMOKE-OK`。

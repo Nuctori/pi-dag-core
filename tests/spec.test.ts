@@ -186,3 +186,23 @@ test("invalid JSON reports cleanly", () => {
 	const r = parseSpec("{ not json");
 	assert.ok(!r.ok);
 });
+
+test("stallAfterSec policy is accepted", () => {
+	const good = JSON.stringify({
+		name: "x",
+		policy: { stallAfterSec: 120 },
+		nodes: { a: { agent: "w", task: "t" } },
+	});
+	assert.equal(issuesOf(good).length, 0);
+});
+
+test("stallAfterSec must be a positive number", () => {
+	for (const v of [0, -5, "60"]) {
+		const bad = JSON.stringify({
+			name: "x",
+			policy: { stallAfterSec: v },
+			nodes: { a: { agent: "w", task: "t" } },
+		});
+		assert.ok(issuesOf(bad).length > 0, `stallAfterSec=${v} must be rejected`);
+	}
+});

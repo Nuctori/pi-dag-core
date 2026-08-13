@@ -73,6 +73,7 @@ const PolicySchema = Type.Object(
 	{
 		failFast: Type.Optional(Type.Boolean()),
 		maxAgents: Type.Optional(Type.Number({ minimum: 1 })),
+		stallAfterSec: Type.Optional(Type.Number({ minimum: 1 })),
 	},
 	{ additionalProperties: false },
 );
@@ -395,6 +396,7 @@ export function defaultPolicy(spec: Spec): Required<Policy> {
 	return {
 		failFast: spec.policy?.failFast ?? true,
 		maxAgents: spec.policy?.maxAgents ?? 20,
+		stallAfterSec: spec.policy?.stallAfterSec ?? 600,
 	};
 }
 

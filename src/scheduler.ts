@@ -432,7 +432,12 @@ export function checkFinish(run: RunState): { ok: boolean; report: string[] } {
 			specN.continueOnError &&
 			!requiredSet.has(name)
 		) {
-			report.push(`  ⚠ ${name} (failed, continueOnError)`);
+			// "never executed" = dag_fail declared on a ready node without any
+			// observed subagent call (the only way finish can succeed with an
+			// un-run node) — surface it so the human sees the skip.
+			report.push(
+				`  ⚠ ${name} (failed, continueOnError${n.toolCallId ? "" : " — never executed"})`,
+			);
 			continue;
 		}
 		if (!isRequired && (n.state === "failed" || n.state === "blocked")) {
@@ -452,4 +457,47 @@ export function loopOwner(run: RunState, body: string): string | undefined {
 		if (n.loop?.body === body) return name;
 	}
 	return undefined;
+}
+
+/* ------------------------------------------------------------------ */
+/* Liveness observation (stall nudge)                                  */
+/* ------------------------------------------------------------------ */
+
+export interface StalledNode {
+	node: string;
+	state: "ready" | "running";
+	/** seconds since issue (ready) or observed execution (running). */
+	seconds: number;
+}
+
+/**
+ * Read-only liveness check: nodes that have been issued but never launched
+ * (ready) or executed but never completed (running) for longer than
+ * `stallAfterMs`. This is a NUDGE, not enforcement — stalled nodes never
+ * expire or auto-fail; they stay recoverable indefinitely (the issued
+ * payload remains valid, and a running node only needs dag_complete).
+ * awaiting_approval is a human gate and is never "stalled"; loop owners
+ * carry no issueTs and are skipped (their body is the actionable node).
+ */
+export function stalledNodes(
+	run: RunState,
+	now = Date.now(),
+	stallAfterMs: number,
+): StalledNode[] {
+	const out: StalledNode[] = [];
+	if (run.status !== "running") return out;
+	for (const [name, n] of Object.entries(run.nodes)) {
+		if (n.state !== "ready" && n.state !== "running") continue;
+		const since = n.state === "ready" ? n.issueTs : n.executedTs;
+		if (since === undefined) continue;
+		const age = now - since;
+		if (age >= stallAfterMs) {
+			out.push({
+				node: name,
+				state: n.state,
+				seconds: Math.round(age / 1000),
+			});
+		}
+	}
+	return out;
 }

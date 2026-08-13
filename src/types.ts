@@ -66,6 +66,14 @@ export interface Policy {
 	failFast?: boolean;
 	/** Hard cap on subagent executions per run. Default 20. */
 	maxAgents?: number;
+	/**
+	 * Stall nudge threshold (seconds): a node issued-but-not-launched (ready)
+	 * or executed-but-not-completed (running) older than this triggers a
+	 * read-only reminder in dag tool results and /dag status. Default 600.
+	 * The nudge never fails or retries anything — stalled nodes stay
+	 * recoverable indefinitely.
+	 */
+	stallAfterSec?: number;
 }
 
 export interface Spec {

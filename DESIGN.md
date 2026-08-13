@@ -29,7 +29,7 @@ pi-dag-core 的完整设计依据。代码必须服从本契约；契约变更�
 | 提前 finish | `dag_finish` 全量校验必需节点 | 硬 |
 | 循环无限 | `maxIterations` 状态机硬顶（第 N 次尝试失败即耗竭） | 硬 |
 | 假装执行（没调 subagent 就 complete） | 无执行证据 → 拒绝（state 非 running） | 硬 |
-| 改 payload 调 subagent | 参数与签发 payload 逐字比对（核心自己观察，非 AI 自报） | 硬（可检测） |
+| 改 payload 调 subagent | 参数与签发 payload 归一化比对（引号字形/空白折叠容错——真实使用中 LLM 重发必改写引号；加词/删词/重排仍拒绝，防伪造属性保留；核心自己观察，非 AI 自报） | 硬（可检测） |
 | 伪造产物 | 存在 / 非空 / mtime ≥ 就绪 / sha256 / grep / json / **realpath 不逃逸项目根** | 硬（可检测） |
 | 并行节点产物串扰 | spec 校验拒绝重叠 `produces` | 硬 |
 | 用旧产物交差 | mtime 早于就绪时间 → 拒绝 | 硬 |
@@ -52,13 +52,19 @@ pi-dag-core 的完整设计依据。代码必须服从本契约；契约变更�
 
 循环：**loop 是节点属性**，静态图保持无环。`loop: { body, until: "passed", maxIterations }` —— body 反复执行直至产物过闸；owner 在 body 通过时置 `passed`。自由文本 `until`（LLM 判定）为 v1。
 
+### 停滞提醒（stall nudge，只读 liveness）
+
+liveness（推进）是执行者的协议义务，状态机不强制——但提供只读提醒：`policy.stallAfterSec`（默认 600s）内无协议进展的节点（`ready` 未启动 / `running` 未 complete）出现在 dag 工具结果与 `/dag status` 的 Stalled 段，并给出精确下一步（补 subagent / 补 dag_complete / dag_abort）。**不失败、不重试、不过期**：ready payload 永久有效，running 只需补 dag_complete；`awaiting_approval` 是人工闸永不判停滞；从未签发的循环 owner（无 issueTs）不判停滞。提示经缓冲归因细化：已观察到匹配 subagent 调用但节点仍 ready 时（结果在手、忘了 complete），提示指向 dag_complete 而非重跑，避免双重执行。
+
 ## 5. 证据链（CI 模型）
 
 ```text
 启动证明（tool_execution_start, 参数逐字匹配 + 时序）→ 执行结束（tool_execution_end, isError）→ 产物（存在/mtime/hash/realpath）
 ```
 
-- 归因不依赖 AI 自报 run-id：核心订阅 `tool_execution_start`（preflight，按源顺序先行发射）观察真实调用，按签发 payload 匹配
+启动证明（tool_execution_start, 参数归一化匹配 + 时序）→ 执行结束（tool_execution_end, isError）→ 产物（存在/mtime/hash/realpath）
+
+- 归因不依赖 AI 自报 run-id：核心订阅 `tool_execution_start`（preflight，按源顺序先行发射）观察真实调用，按签发 payload 归一化匹配（引号字形归一 + 空白折叠；实质改动拒绝）
 - **H1：未结束的调用（无 execution_end）不可归因** → dag_complete 被拒；禁止与 subagent 同消息批处理
 - 并行 `tasks[]` 共享 toolCallId，去重键 = `toolCallId|agent|task`；归因要求 `ts ≥ issuedAt`（M4 防陈旧事件）
 - verifier 节点：`{artifacts}` 占位符在签发时替换为依赖产物路径 + sha256
@@ -73,7 +79,9 @@ pi-dag-core 的完整设计依据。代码必须服从本契约；契约变更�
 
 跨层唯一显式通道：`/dag save`（会话 → 项目，人确认）。运行态跟随定义作用域。
 
-## 7. 协议（注入的 guidelines，仅此 5 条）
+## 7. 协议（注入的 guidelines）
+
+5 条执行协议 + 2 条 WHEN 触发指引（"何时该用 dag"，见 95e72c5），每次工具结果附 PROTOCOL 提示块（含 H1 禁批处理与产物路径相对 cwd 的说明）。执行协议：
 
 1. Use dag_start to begin a workflow. It returns a ready batch: call subagent exactly as specified (same agent and task, no edits).
 2. After each node's subagent call — **wait for its result** — call dag_complete with the node name; a node becomes passed only through dag_complete. Never batch dag_complete with subagent in one message.
@@ -91,5 +99,5 @@ index.ts（pi 适配，唯一 pi 依赖）→ core.ts（RunManager 门面）→ 
 
 ## 9. 分期
 
-- **v0（已交付）**：状态机 + 证据闸（preflight 归因/执行结束/isError/产物）+ 三层级 + checkpoint + loop(passed) + 文本/mermaid + 串行化（M7）+ **65 测试**（46 单测/对抗 + 19 适配层 E2E，覆盖全部用户路径含循环耗竭/显式 finish/dag_fail 工具/命令错误路径/resume 已完成）+ 真实 pi 冒烟
+- **v0（已交付）**：状态机 + 证据闸（preflight 归因/执行结束/isError/产物）+ 三层级 + checkpoint + loop(passed) + 文本/mermaid + 串行化（M7）+ 停滞提醒（stallAfterSec）+ **79 测试**（单测/对抗 + 适配层 E2E，覆盖全部用户路径含循环耗竭/显式 finish/dag_fail 工具/命令错误路径/resume 已完成）+ 真实 pi 冒烟
 - **v1（预留）**：gate 命令 transcript 交叉验证（v0 校验拒绝 gate 字段，M9）、自由文本 until、HTML 查看器、YAML spec、subagentRunId 佐证

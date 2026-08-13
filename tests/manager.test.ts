@@ -11,7 +11,8 @@ import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunManager } from "../src/core.js";
-import { computeBatch } from "../src/scheduler.js";
+import { computeBatch, createRun, stalledNodes } from "../src/scheduler.js";
+import { parseSpec } from "../src/spec.js";
 import { loadRunAny } from "../src/state.js";
 import type { SubagentInvocation } from "../src/types.js";
 
@@ -922,6 +923,106 @@ test("M4 regression: stale invocation (ts < issue time) is not attributed", asyn
 			run.nodes[d.node]!.state,
 			"ready",
 			"stale call must not be attributed",
+		);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+/* ------------------------------------------------------------------ */
+/* Stall nudge (liveness observation)                                  */
+/* ------------------------------------------------------------------ */
+
+test("stalledNodes: ready/running nodes stall past the threshold; gates never stall", () => {
+	const parsed = parseSpec(SIMPLE);
+	assert.ok(parsed.ok);
+	const run = createRun(parsed.spec, "run-x", "session", 1000);
+	// ready — issued at t=1000, never launched
+	run.nodes.discover!.state = "ready";
+	run.nodes.discover!.issueTs = 1000;
+	// running — executed at t=2000, never completed
+	run.nodes.review!.state = "running";
+	run.nodes.review!.executedTs = 2000;
+	// checkpoint — human gate, waiting is legitimate, never stalled
+	run.nodes.approve!.state = "awaiting_approval";
+	// ready without issueTs (loop owner) — nothing actionable, never stalled
+	run.nodes.done!.state = "ready";
+
+	assert.equal(
+		stalledNodes(run, 1000 + 60_000, 600_000).length,
+		0,
+		"fresh issue must not stall",
+	);
+	assert.deepEqual(stalledNodes(run, 1000 + 660_000, 600_000), [
+		{ node: "discover", state: "ready", seconds: 660 },
+		{ node: "review", state: "running", seconds: 659 },
+	]);
+	// settled runs never stall
+	run.status = "completed";
+	assert.equal(stalledNodes(run, 1000 + 660_000, 600_000).length, 0);
+});
+
+test("stalledNodes: subagent errored nodes (failed) do not stall", async () => {
+	const t = await tmpRoots();
+	try {
+		const m = new RunManager({
+			project: t.project,
+			user: t.user,
+			sessionId: t.sessionId,
+		});
+		const s = await m.start({ spec: SIMPLE });
+		assert.ok(s.ok);
+		const run = (await loadRunAny(
+			{ project: t.project, user: t.user, sessionId: t.sessionId },
+			s.runId!,
+		))!.run;
+		// subagent error → node failed via evidence, not stalled
+		await m.ingestCalls(run, [
+			call("discover", "scout", s.batch!.items[0]!.task, "tc-err", true),
+		]);
+		assert.equal(run.nodes.discover!.state, "failed");
+		assert.equal(stalledNodes(run, Date.now() + 86_400_000, 600_000).length, 0);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("finish report marks a continueOnError node failed without execution", async () => {
+	const t = await tmpRoots();
+	try {
+		const spec = JSON.stringify({
+			name: "skipped",
+			nodes: {
+				optional: { agent: "w", task: "t", continueOnError: true },
+				main: { agent: "w", task: "t2" },
+			},
+		});
+		const m = new RunManager({
+			project: t.project,
+			user: t.user,
+			sessionId: t.sessionId,
+		});
+		const s = await m.start({ spec });
+		assert.equal(s.batch!.items.length, 2);
+		const run = (await loadRunAny(
+			{ project: t.project, user: t.user, sessionId: t.sessionId },
+			s.runId!,
+		))!.run;
+		// distracted-AI path: dag_fail a never-executed continueOnError node
+		const f = await m.fail(run, "optional", "skipped");
+		assert.ok(f.ok);
+		const run2 = (await loadRunAny(
+			{ project: t.project, user: t.user, sessionId: t.sessionId },
+			s.runId!,
+		))!.run;
+		await m.ingestCalls(run2, [call("main", "w", "t2", "tc-main")]);
+		const c = await m.complete(run2, "main", t.project);
+		assert.ok(c.ok, c.error);
+		const fin = await m.finish(run2);
+		assert.ok(fin.ok, "continueOnError skip must not block finish");
+		assert.ok(
+			fin.report!.some((l) => /never executed/.test(l)),
+			"the skip must be visible in the finish report",
 		);
 	} finally {
 		await t.cleanup();

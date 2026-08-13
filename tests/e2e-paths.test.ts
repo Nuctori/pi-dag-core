@@ -404,6 +404,37 @@ test("path 10: abort stops the run; later transitions are refused", async () => 
 	}
 });
 
+test("M7: concurrent dag_complete + dag_abort leave a coherent snapshot (abort wins)", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const { runId, text } = await start(pi, t.dir, ONE);
+		const a = firstBatch(text, "a");
+		await execNode(pi, t.dir, a); // attributed → running
+
+		// same-message batch: pi runs sibling tool calls concurrently — the
+		// serial queue must make load→mutate→persist atomic, so whichever
+		// tool runs first the persisted run ends aborted (complete-then-abort
+		// or abort-then-complete-rejected). Without the queue, last-write-wins
+		// can lose the abort and leave status=running.
+		await Promise.all([
+			complete(pi, t.dir, runId, "a"),
+			tool(pi, "dag_abort").execute(
+				"c-ab",
+				{ runId, reason: "race" },
+				undefined,
+				undefined,
+				{ cwd: t.dir },
+			),
+		]);
+		const status = await pi.runCommand(`status ${runId}`, t.dir);
+		assert.match(status[0]?.text ?? "", /aborted/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
 test("path 11: resume re-issues an in-flight node in a NEW session", async () => {
 	const t = await tmpProject();
 	try {

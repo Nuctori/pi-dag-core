@@ -142,10 +142,12 @@ export async function listDefinitions(
 		try {
 			const dir = defsDir(r, scope);
 			for (const f of await readdir(dir)) {
-				if (f.endsWith(".json") || f.endsWith(".yaml") || f.endsWith(".yml")) {
+				// v0 definitions are JSON-only (YAML spec is v1) — don't list
+				// files the loader can never load.
+				if (f.endsWith(".json")) {
 					out.push({
 						scope,
-						name: f.replace(/\.(json|ya?ml)$/, ""),
+						name: f.replace(/\.json$/, ""),
 						file: join(dir, f),
 					});
 				}

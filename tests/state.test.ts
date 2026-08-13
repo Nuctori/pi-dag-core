@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -107,6 +107,26 @@ test("definition listing covers both scopes", async () => {
 		const names = defs.map((d) => `${d.scope}:${d.name}`);
 		assert.ok(names.includes("project:pdef"));
 		assert.ok(names.includes("user:udef"));
+	} finally {
+		await rm(r.project, { recursive: true, force: true });
+	}
+});
+
+test("definition listing ignores non-JSON files (yaml is v1)", async () => {
+	const r = await tmpRoots();
+	try {
+		await saveDefinition(r, "project", "pdef", SPEC);
+		await writeFile(
+			join(r.project, ".pi", "workflows", "stray.yaml"),
+			"name: stray\n",
+		);
+		const defs = await listDefinitions(r);
+		const names = defs.map((d) => d.name);
+		assert.ok(names.includes("pdef"));
+		assert.ok(
+			!names.includes("stray"),
+			"yaml files must not be listed — the v0 loader reads JSON only",
+		);
 	} finally {
 		await rm(r.project, { recursive: true, force: true });
 	}

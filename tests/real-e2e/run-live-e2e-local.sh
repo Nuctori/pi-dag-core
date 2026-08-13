@@ -20,8 +20,15 @@ echo "== start ollama + pull $LIVE_MODEL =="
 ollama serve >"$SMOKE_HOME/ollama.log" 2>&1 &
 OLLAMA_PID=$!
 trap 'kill $OLLAMA_PID 2>/dev/null || true' EXIT
-for _ in $(seq 1 30); do curl -s http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && break; sleep 1; done
-ollama pull "$LIVE_MODEL" >/dev/null 2>&1 || { echo "model pull failed"; cat "$SMOKE_HOME/ollama.log"; exit 1; }
+for _ in $(seq 1 30); do
+	curl -s http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && break
+	sleep 1
+done
+ollama pull "$LIVE_MODEL" >/dev/null 2>&1 || {
+	echo "model pull failed"
+	cat "$SMOKE_HOME/ollama.log"
+	exit 1
+}
 
 echo "== provision extensions (dag-core + ollama provider) =="
 mkdir -p "$SMOKE_HOME/.pi/agent/extensions"
@@ -39,14 +46,17 @@ tail -25 "$OUT"
 echo "== assert workflow completed =="
 RUN_DIR="$(find "$SMOKE_HOME/.pi/agent/workflows/runs" -name events.jsonl 2>/dev/null | head -1)"
 if [ -z "$RUN_DIR" ]; then
-  echo "=== LIVE-E2E-LOCAL FAILED: no run state produced ==="
-  echo "--- assistant tool sequence (what the model actually did) ---"
-  grep -o '"toolName":"[a-z_]*"' "$OUT" | sort | uniq -c || true
-  exit 1
+	echo "=== LIVE-E2E-LOCAL FAILED: no run state produced ==="
+	echo "--- assistant tool sequence (what the model actually did) ---"
+	grep -o '"toolName":"[a-z_]*"' "$OUT" | sort | uniq -c || true
+	exit 1
 fi
 EVENTS=$(grep -o '"type":"[a-z]*"' "$RUN_DIR" | sed 's/"type":"//;s/"//' | tr '\n' ' ')
 echo "events: $EVENTS"
 case "$EVENTS" in
-  *start*executed*passed*finish*) echo "=== LIVE-E2E-LOCAL PASSED ===" ;;
-  *) echo "=== LIVE-E2E-LOCAL FAILED: incomplete event chain: $EVENTS ==="; exit 1 ;;
+*start*executed*passed*finish*) echo "=== LIVE-E2E-LOCAL PASSED ===" ;;
+*)
+	echo "=== LIVE-E2E-LOCAL FAILED: incomplete event chain: $EVENTS ==="
+	exit 1
+	;;
 esac

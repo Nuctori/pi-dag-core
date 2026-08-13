@@ -217,3 +217,39 @@ test("P0: directories are valid artifacts — nonEmpty = has entries, fresh = ne
 		await rm(dir, { recursive: true, force: true });
 	}
 });
+
+test("P0-regression: a freshly created EMPTY directory passes the default exists check", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "dag-evidence-emptydir-"));
+	try {
+		const specNode: NodeSpec = {
+			agent: "w",
+			task: "t",
+			produces: [{ path: "out/" }], // default exists check
+		};
+		const issuedAt = Date.now();
+		await new Promise((r) => setTimeout(r, 5));
+		await mkdir(join(dir, "out")); // created AFTER issue, empty
+		const res = await checkArtifacts(dir, specNode, issuedAt);
+		assert.equal(
+			res.ok,
+			true,
+			"fresh empty dir must pass exists: " + JSON.stringify(res.evidence),
+		);
+		const e = res.evidence[0]!;
+		assert.equal(e.exists, true);
+		assert.equal(e.mtimeAfterIssue, true);
+		// an empty dir whose mtime predates the issue must still fail freshness
+		const staleDir = join(dir, "stale");
+		await mkdir(staleDir);
+		await new Promise((r) => setTimeout(r, 5));
+		const res2 = await checkArtifacts(
+			dir,
+			{ ...specNode, produces: [{ path: "stale/" }] },
+			Date.now(),
+		);
+		assert.equal(res2.ok, false, "stale empty dir must fail freshness");
+		assert.match(res2.evidence[0]!.detail ?? "", /stale artifact/);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});

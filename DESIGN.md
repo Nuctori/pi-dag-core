@@ -99,5 +99,5 @@ index.ts（pi 适配，唯一 pi 依赖）→ core.ts（RunManager 门面）→ 
 
 ## 9. 分期
 
-- **v0（已交付）**：状态机 + 证据闸（preflight 归因/执行结束/isError/产物）+ 三层级 + checkpoint + loop(passed) + 文本/mermaid + 串行化（M7）+ 停滞提醒（stallAfterSec）+ **79 测试**（单测/对抗 + 适配层 E2E，覆盖全部用户路径含循环耗竭/显式 finish/dag_fail 工具/命令错误路径/resume 已完成）+ 真实 pi 冒烟
+- **v0（已交付）**：状态机 + 证据闸（preflight 归因/执行结束/isError/产物）+ 三层级 + checkpoint + loop(passed) + 文本/mermaid + 串行化（M7）+ 停滞提醒（stallAfterSec）+ **83 测试**（单测/对抗 + 适配层 E2E，覆盖全部用户路径含循环耗竭/显式 finish/dag_fail 工具/命令错误路径/resume 已完成）+ 真实 pi 冒烟
 - **v1（预留）**：gate 命令 transcript 交叉验证（v0 校验拒绝 gate 字段，M9）、自由文本 until、HTML 查看器、YAML spec、subagentRunId 佐证

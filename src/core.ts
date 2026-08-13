@@ -218,7 +218,10 @@ export class RunManager {
 		const attributions = attributeInvocations(pending, attributable, consumed);
 		const out: { node: string; toolCallId: string }[] = [];
 		for (const a of attributions) {
-			markExecuted(run, a.node, a.invocation.toolCallId);
+			// executedTs = the call's OBSERVED launch time (tool_execution_start),
+			// not the drain time — a node launched long ago but attributed late
+			// must still count as stalled (stall nudge correctness).
+			markExecuted(run, a.node, a.invocation.toolCallId, a.invocation.ts);
 			await appendEvent(this.roots, run, "executed", {
 				node: a.node,
 				toolCallId: a.invocation.toolCallId,

@@ -235,11 +235,14 @@ export async function checkArtifacts(
 			}
 			// P0: directories are legitimate artifacts. nonEmpty = the directory
 			// has entries; freshness = at least one entry was written after the
-			// node was issued (the dir's own mtime predates the run).
+			// node was issued (the dir's own mtime predates the run). Seed with
+			// the dir's own mtime: an EMPTY dir has no entries to scan, and a
+			// freshly created empty dir is legit `exists` evidence (regression:
+			// seeding 0 made every new empty dir fail as "stale").
 			if (st.isDirectory()) {
 				const entries = await readdir(abs);
 				entry.nonEmpty = entries.length > 0;
-				let newest = 0;
+				let newest = st.mtimeMs;
 				for (const name of entries) {
 					try {
 						const es = await stat(join(abs, name));

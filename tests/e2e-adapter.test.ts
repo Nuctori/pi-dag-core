@@ -185,3 +185,161 @@ test("E2E (H2): missing subagent tool triggers a startup warning", async () => {
 		await t.cleanup();
 	}
 });
+
+/* ------------------------------------------------------------------ */
+/* Stall nudge (liveness) — adapter-level, tiny threshold + real sleep  */
+/* ------------------------------------------------------------------ */
+
+const STALL_SPEC = JSON.stringify({
+	name: "e2e-stall",
+	policy: { stallAfterSec: 1 },
+	nodes: {
+		discover: {
+			agent: "scout",
+			task: "Explore and write ctx.md",
+			produces: [{ path: "ctx.md", check: "nonEmpty" }],
+		},
+		done: { agent: "worker", task: "wrap up" },
+	},
+});
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test("E2E (stall): near-miss rejection advises re-running with the exact payload", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const { runId, text } = await startRun(pi, t.dir, STALL_SPEC);
+		const { agent, task } = toolArgs(text);
+
+		// AI launched with a MODIFIED payload (near-miss) — call finished
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-near",
+			toolName: "subagent",
+			args: { agent, task: task + " (my own version)" },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-near",
+			toolName: "subagent",
+			isError: false,
+		});
+		await sleep(1100); // age > stallAfterSec
+
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const res = (await complete.execute(
+			"c2",
+			{ runId, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		const out = res.content[0]?.text ?? "";
+		assert.match(out, /Stalled/);
+		// the call did NOT attribute (post-drain buffer empty) — re-run with
+		// the EXACT payload is the correct advice, not dag_complete
+		assert.match(out, /call subagent with the issued payload/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("E2E (stall): in-flight subagent call advises waiting, not re-launching", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const { runId, text } = await startRun(pi, t.dir, STALL_SPEC);
+		const { agent, task } = toolArgs(text);
+
+		// launch observed but execution STILL running (no end event)
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-inflight",
+			toolName: "subagent",
+			args: { agent, task },
+		});
+		await sleep(1100);
+
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const res = (await complete.execute(
+			"c2",
+			{ runId, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		const out = res.content[0]?.text ?? "";
+		assert.match(out, /no execution evidence/); // H1 still enforced
+		assert.match(out, /Stalled/);
+		assert.match(out, /still running — wait for its result/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("E2E (stall): executed-but-uncompleted sibling advises dag_complete", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const { runId, text } = await startRun(pi, t.dir, STALL_SPEC);
+		const { agent, task } = toolArgs(text); // discover payload
+		// 'done' was issued in the SAME start batch (no deps) — take its
+		// payload from the start text; post-complete batches never re-issue (B2).
+		const doneMatch = text.match(
+			/node: done\s*\n {2}agent: ([^\n]+)\n {2}task: ([^\n]+)/,
+		);
+		assert.ok(doneMatch, "done payload present in start batch");
+
+		// complete discover properly
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-a",
+			toolName: "subagent",
+			args: { agent, task },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-a",
+			toolName: "subagent",
+			isError: false,
+		});
+		await writeFile(join(t.dir, "ctx.md"), "artifact content");
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const res1 = (await complete.execute(
+			"c2",
+			{ runId, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(res1.content[0]?.text ?? "", /discover passed/);
+
+		// sibling 'done' executed (call finished) but never completed
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-b",
+			toolName: "subagent",
+			args: { agent: doneMatch[1]!, task: doneMatch[2]!.trim() },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-b",
+			toolName: "subagent",
+			isError: false,
+		});
+		await sleep(1100);
+
+		// re-complete discover → rejected (already passed) but the drain
+		// attributes done → stall note says dag_complete, not re-run
+		const res2 = (await complete.execute(
+			"c2",
+			{ runId, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		const out = res2.content[0]?.text ?? "";
+		assert.match(out, /already passed/);
+		assert.match(out, /Stalled/);
+		assert.match(out, /result is in hand — call dag_complete/);
+	} finally {
+		await t.cleanup();
+	}
+});

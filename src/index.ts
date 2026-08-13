@@ -193,10 +193,13 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 	 * tool results and /dag status. NEVER enforcement — stalled nodes stay
 	 * recoverable indefinitely (ready payloads never expire; a running node
 	 * only needs dag_complete). awaiting_approval is a human gate and never
-	 * "stalled". Hints are refined against the capture buffer: a finished
-	 * subagent call matching the issued payload means the node WAS executed
-	 * and only dag_complete is missing (the common "got the result, moved
-	 * on" distraction) — advising a re-run would double-execute.
+	 * "stalled". Hints are refined against the capture buffer: a subagent call
+	 * matching the issued payload means the node WAS touched — finished → only
+	 * dag_complete is missing (the common "got the result, moved on"
+	 * distraction); in-flight → wait, do not re-launch. No match (including
+	 * post-drain near-misses) → re-run with the exact payload is the correct
+	 * advice: the observed call did NOT attribute, so it never happened for
+	 * the state machine.
 	 */
 	function stallNote(run: RunState): string {
 		if (run.status !== "running") return "";
@@ -206,27 +209,35 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 		const lines = stalled.map((s) => {
 			const specN = run.spec.nodes[s.node]!;
 			const node = run.nodes[s.node]!;
-			const launched =
-				s.state === "running" ||
-				buffer.some((b) => {
-					if (!b.finished) return false;
+			let touched: "done" | "in-flight" | "none" =
+				s.state === "running" ? "done" : "none";
+			if (touched === "none") {
+				for (const b of buffer) {
 					const invs = normalizeInvocations({
 						toolCallId: b.toolCallId,
 						ts: b.ts,
 						input: b.input,
 						isError: b.isError,
-						finished: true,
+						finished: b.finished,
 					});
-					return invs.some(
+					const match = invs.some(
 						(inv) =>
 							inv.agent === specN.agent &&
 							normalizeTask(inv.task) ===
 								normalizeTask(node.issuedTask ?? specN.task ?? ""),
 					);
-				});
-			const action = launched
-				? "the subagent result is in hand — call dag_complete"
-				: "call subagent with the issued payload, then dag_complete";
+					if (match) {
+						touched = b.finished ? "done" : "in-flight";
+						break;
+					}
+				}
+			}
+			const action =
+				touched === "done"
+					? "the subagent result is in hand — call dag_complete"
+					: touched === "in-flight"
+						? "the subagent call is still running — wait for its result, then dag_complete"
+						: "call subagent with the issued payload, then dag_complete";
 			return `  ⚠ ${s.node} — ${s.state} ${Math.round(s.seconds / 60)}min without progress: ${action}. Or dag_abort to return to the human.`;
 		});
 		return `\nStalled (policy.stallAfterSec=${policy.stallAfterSec}s):\n${lines.join("\n")}`;
@@ -281,32 +292,36 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			try {
-				requireRoots();
-				if (params.spec) lastInlineSpec = params.spec;
-				const res = await manager.start({
-					spec: params.spec,
-					specName: params.specName,
-					resumeRunId: params.resumeRunId,
-				});
-				if (!res.ok) return ok(`dag_start rejected:\n${res.error}`);
-				const batchText = renderBatch(res.batch!);
-				const text = [
-					`Workflow started: runId=${res.runId} (scope=${res.scope})`,
-					"",
-					`Ready batch:\n${batchText}`,
-					"",
-					PROTOCOL,
-				].join("\n");
-				return ok(text, {
-					runId: res.runId,
-					scope: res.scope,
-					status: res.status,
-					batch: res.batch,
-				});
-			} catch (e) {
-				return ok(`dag_start error: ${(e as Error).message}`);
-			}
+			// M7: resume rewrites existing run state (ready/running → queued) —
+			// same serial queue as complete/finish/abort.
+			return serial(async () => {
+				try {
+					requireRoots();
+					if (params.spec) lastInlineSpec = params.spec;
+					const res = await manager.start({
+						spec: params.spec,
+						specName: params.specName,
+						resumeRunId: params.resumeRunId,
+					});
+					if (!res.ok) return ok(`dag_start rejected:\n${res.error}`);
+					const batchText = renderBatch(res.batch!);
+					const text = [
+						`Workflow started: runId=${res.runId} (scope=${res.scope})`,
+						"",
+						`Ready batch:\n${batchText}`,
+						"",
+						PROTOCOL,
+					].join("\n");
+					return ok(text, {
+						runId: res.runId,
+						scope: res.scope,
+						status: res.status,
+						batch: res.batch,
+					});
+				} catch (e) {
+					return ok(`dag_start error: ${(e as Error).message}`);
+				}
+			});
 		},
 	});
 
@@ -597,11 +612,16 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 						return ctx.ui.notify(`usage: /dag ${sub} <runId> <node>`, "error");
 					const run = await loadRun(runId);
 					if ("error" in run) return ctx.ui.notify(run.error, "error");
-					const res = await manager.resolveCheckpoint(
-						run,
-						node,
-						sub === "approve",
-						rest.slice(2).join(" ") || undefined,
+					// M7: approve/reject mutates run state — same serial queue as
+					// the AI-facing tools (human gate racing dag_complete would
+					// otherwise last-write-wins on the snapshot).
+					const res = await serial(() =>
+						manager.resolveCheckpoint(
+							run,
+							node,
+							sub === "approve",
+							rest.slice(2).join(" ") || undefined,
+						),
 					);
 					if (!res.ok)
 						return ctx.ui.notify(`checkpoint: ${res.error}`, "error");

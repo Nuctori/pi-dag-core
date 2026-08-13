@@ -141,6 +141,11 @@ test("E2E (H1): dag_complete before the subagent call finishes is rejected", asy
 			content: { type: string; text: string }[];
 		};
 		assert.match(res.content[0]?.text ?? "", /no execution evidence/);
+		assert.match(
+			res.content[0]?.text ?? "",
+			/STILL RUNNING — wait for its result/,
+			"rejection must name the in-flight cause instead of repeating the protocol",
+		);
 
 		// now the call finishes → the SAME buffered call becomes attributable
 		await pi.emit("tool_execution_end", {
@@ -404,7 +409,9 @@ test("E2E (auto-approve): unattended checkpoint passes via resume poll", async (
 		assert.match(out2, /node: b/);
 
 		// complete b and finish — the report discloses the auto approval
-		const bArgs = out2.match(/node: b\s*\n {2}agent: ([^\n]+)\n {2}task: ([^\n]+)/);
+		const bArgs = out2.match(
+			/node: b\s*\n {2}agent: ([^\n]+)\n {2}task: ([^\n]+)/,
+		);
 		assert.ok(bArgs, "b payload in resume batch");
 		await pi.emit("tool_execution_start", {
 			toolCallId: "tc-b",
@@ -425,14 +432,143 @@ test("E2E (auto-approve): unattended checkpoint passes via resume poll", async (
 		)) as { content: { type: string; text: string }[] };
 		assert.match(res3.content[0]?.text ?? "", /b passed/);
 		const finish = pi.tools.find((x) => x.name === "dag_finish")!;
-		const res4 = (await finish.execute(
-			"c5",
-			{ runId },
+		const res4 = (await finish.execute("c5", { runId }, undefined, undefined, {
+			cwd: t.dir,
+		})) as { content: { type: string; text: string }[] };
+		assert.match(res4.content[0]?.text ?? "", /auto-approved, unattended/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+/* ------------------------------------------------------------------ */
+/* Rejection diagnostics (real-session findings: evidence friction)    */
+/* ------------------------------------------------------------------ */
+
+test("E2E (diag): retry without re-execution names the cause (evidence clock)", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const spec = JSON.stringify({
+			name: "e2e-diag-retry",
+			nodes: {
+				a: {
+					agent: "w",
+					task: "produce a.md",
+					produces: [{ path: "a.md", check: "nonEmpty" }],
+				},
+			},
+		});
+		const { runId, text } = await startRun(pi, t.dir, spec);
+		const { agent, task } = toolArgs(text);
+
+		// execute, but the artifact is missing → gate fails → node failed (attempt 1)
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-1",
+			toolName: "subagent",
+			args: { agent, task },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-1",
+			toolName: "subagent",
+			isError: false,
+		});
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const res1 = (await complete.execute(
+			"c2",
+			{ runId, node: "a" },
 			undefined,
 			undefined,
 			{ cwd: t.dir },
 		)) as { content: { type: string; text: string }[] };
-		assert.match(res4.content[0]?.text ?? "", /auto-approved, unattended/);
+		assert.match(res1.content[0]?.text ?? "", /artifact evidence failed/);
+
+		// retry, then complete WITHOUT re-executing (the msq5zurp pattern)
+		const retry = pi.tools.find((x) => x.name === "dag_retry")!;
+		await retry.execute("c3", { runId, node: "a" }, undefined, undefined, {
+			cwd: t.dir,
+		});
+		const res2 = (await complete.execute(
+			"c4",
+			{ runId, node: "a" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		const out = res2.content[0]?.text ?? "";
+		assert.match(out, /no execution evidence/);
+		assert.match(out, /previously executed \(attempt 1\)/);
+		assert.match(out, /resets the evidence clock/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("E2E (diag): all nodes passed but unfinished → nudge dag_finish", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const { runId, text } = await startRun(pi, t.dir, STALL_SPEC);
+		const { agent, task } = toolArgs(text); // discover payload
+		const doneMatch = text.match(
+			/node: done\s*\n {2}agent: ([^\n]+)\n {2}task: ([^\n]+)/,
+		);
+		assert.ok(doneMatch, "done payload present in start batch");
+
+		// complete both nodes but never call dag_finish
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-a",
+			toolName: "subagent",
+			args: { agent, task },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-a",
+			toolName: "subagent",
+			isError: false,
+		});
+		await writeFile(join(t.dir, "ctx.md"), "artifact content");
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const res1 = (await complete.execute(
+			"c2",
+			{ runId, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(res1.content[0]?.text ?? "", /discover passed/);
+
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-b",
+			toolName: "subagent",
+			args: { agent: doneMatch[1]!, task: doneMatch[2]!.trim() },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-b",
+			toolName: "subagent",
+			isError: false,
+		});
+		const res2 = (await complete.execute(
+			"c3",
+			{ runId, node: "done" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(res2.content[0]?.text ?? "", /done passed/);
+
+		// touch the run again without finishing → the nudge names dag_finish
+		const res3 = (await complete.execute(
+			"c4",
+			{ runId, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		const out = res3.content[0]?.text ?? "";
+		assert.match(out, /already passed/);
+		assert.match(out, /Call dag_finish/);
 	} finally {
 		await t.cleanup();
 	}

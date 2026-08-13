@@ -1102,14 +1102,7 @@ test("auto-approve: expired gate passes via sweep; dependent becomes issuable", 
 
 		// audit trail: events.jsonl records the auto approval
 		const events = await readFile(
-			join(
-				t.project,
-				".pi",
-				"workflows",
-				"runs",
-				run.runId,
-				"events.jsonl",
-			),
+			join(t.project, ".pi", "workflows", "runs", run.runId, "events.jsonl"),
 			"utf8",
 		);
 		assert.match(

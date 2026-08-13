@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
 	normalizeInvocations,
 	attributeInvocations,
@@ -249,6 +249,27 @@ test("P0-regression: a freshly created EMPTY directory passes the default exists
 		);
 		assert.equal(res2.ok, false, "stale empty dir must fail freshness");
 		assert.match(res2.evidence[0]!.detail ?? "", /stale artifact/);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("MISSING artifact detail teaches the resolved absolute path (cwd ambiguity)", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "dag-evidence-missing-"));
+	try {
+		const specNode: NodeSpec = {
+			agent: "w",
+			task: "t",
+			produces: [{ path: "docs/x.md", check: "nonEmpty" }],
+		};
+		const res = await checkArtifacts(dir, specNode, Date.now());
+		assert.equal(res.ok, false);
+		const detail = res.evidence[0]!.detail ?? "";
+		assert.ok(
+			detail.includes(`expected at ${resolve(dir, "docs", "x.md")}`),
+			"detail must name the exact resolved path (the cwd-mismatch case)",
+		);
+		assert.match(detail, /RELATIVE to the session cwd/);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

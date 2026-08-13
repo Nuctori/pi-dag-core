@@ -284,7 +284,7 @@ export async function checkArtifacts(
 		}
 
 		if (parsed?.type === "nonEmpty" && (!entry.exists || !entry.nonEmpty)) {
-			entry.detail = "missing or empty";
+			entry.detail = `missing or empty — expected at ${abs}; produces paths are RELATIVE to the session cwd — if the subagent wrote it under its own working dir, copy/move it here`;
 			ok = false;
 		} else if (parsed?.type === "grep" && (!entry.exists || !entry.grepMatch)) {
 			entry.detail = `grep "${parsed.pattern}" not found`;
@@ -293,7 +293,7 @@ export async function checkArtifacts(
 			entry.detail = "not valid JSON";
 			ok = false;
 		} else if (parsed?.type === "exists" && !entry.exists) {
-			entry.detail = "missing";
+			entry.detail = `missing — expected at ${abs}; produces paths are RELATIVE to the session cwd — if the subagent wrote it under its own working dir, copy/move it here`;
 			ok = false;
 		} else if (entry.exists && !entry.mtimeAfterIssue) {
 			entry.detail = "written before the node was issued (stale artifact)";

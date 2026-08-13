@@ -24,7 +24,7 @@ import type {
 import { Type } from "typebox";
 import { RunManager } from "./core.js";
 import { defaultPolicy } from "./spec.js";
-import { stalledNodes } from "./scheduler.js";
+import { checkFinish, stalledNodes } from "./scheduler.js";
 import { firstDiff, normalizeInvocations, normalizeTask } from "./evidence.js";
 import {
 	defaultRoots,
@@ -34,7 +34,12 @@ import {
 	type Roots,
 } from "./state.js";
 import { renderMermaid, renderText } from "./viz.js";
-import type { ReadyBatch, RunState } from "./types.js";
+import type {
+	NodeRun,
+	NodeSpec,
+	ReadyBatch,
+	RunState,
+} from "./types.js";
 
 const SUBAGENT_TOOL = "subagent";
 const MAX_BUFFER = 200;
@@ -211,6 +216,35 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 	}
 
 	/**
+	 * Buffer match for a node: "done" (finished call with the exact issued
+	 * payload observed), "in-flight" (matching call still running), or
+	 * "none". Shared by the stall nudge and dag_complete rejection
+	 * diagnostics.
+	 */
+	function bufferedTouch(
+		node: NodeRun,
+		specN: NodeSpec,
+	): "done" | "in-flight" | "none" {
+		for (const b of buffer) {
+			const invs = normalizeInvocations({
+				toolCallId: b.toolCallId,
+				ts: b.ts,
+				input: b.input,
+				isError: b.isError,
+				finished: b.finished,
+			});
+			const match = invs.some(
+				(inv) =>
+					inv.agent === specN.agent &&
+					normalizeTask(inv.task) ===
+						normalizeTask(node.issuedTask ?? specN.task ?? ""),
+			);
+			if (match) return b.finished ? "done" : "in-flight";
+		}
+		return "none";
+	}
+
+	/**
 	 * Liveness nudge (read-only): stalled nodes for a run, appended to dag
 	 * tool results and /dag status. NEVER enforcement — stalled nodes stay
 	 * recoverable indefinitely (ready payloads never expire; a running node
@@ -225,35 +259,19 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 	 */
 	function stallNote(run: RunState): string {
 		if (run.status !== "running") return "";
+		// finishable-but-unfinished: every required node passed, dag_finish
+		// never called (observed in real sessions: run left "running" forever).
+		if (checkFinish(run).ok) {
+			return `\n✓ All required nodes passed — the workflow is finishable. Call dag_finish to complete it.`;
+		}
 		const policy = defaultPolicy(run.spec);
 		const stalled = stalledNodes(run, Date.now(), policy.stallAfterSec * 1000);
 		if (stalled.length === 0) return "";
 		const lines = stalled.map((s) => {
 			const specN = run.spec.nodes[s.node]!;
 			const node = run.nodes[s.node]!;
-			let touched: "done" | "in-flight" | "none" =
-				s.state === "running" ? "done" : "none";
-			if (touched === "none") {
-				for (const b of buffer) {
-					const invs = normalizeInvocations({
-						toolCallId: b.toolCallId,
-						ts: b.ts,
-						input: b.input,
-						isError: b.isError,
-						finished: b.finished,
-					});
-					const match = invs.some(
-						(inv) =>
-							inv.agent === specN.agent &&
-							normalizeTask(inv.task) ===
-								normalizeTask(node.issuedTask ?? specN.task ?? ""),
-					);
-					if (match) {
-						touched = b.finished ? "done" : "in-flight";
-						break;
-					}
-				}
-			}
+			const touched: "done" | "in-flight" | "none" =
+				s.state === "running" ? "done" : bufferedTouch(node, specN);
 			const action =
 				touched === "done"
 					? "the subagent result is in hand — call dag_complete"
@@ -327,13 +345,14 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 					});
 					if (!res.ok) return ok(`dag_start rejected:\n${res.error}`);
 					const batchText = renderBatch(res.batch!);
-					const text = [
-						`Workflow started: runId=${res.runId} (scope=${res.scope})${res.resume ? " [resumed]" : ""}`,
-						"",
-						`Ready batch:\n${batchText}`,
-						"",
-						PROTOCOL,
-					].join("\n") + autoNote(res.autoApproved ?? []);
+					const text =
+						[
+							`Workflow started: runId=${res.runId} (scope=${res.scope})${res.resume ? " [resumed]" : ""}`,
+							"",
+							`Ready batch:\n${batchText}`,
+							"",
+							PROTOCOL,
+						].join("\n") + autoNote(res.autoApproved ?? []);
 					return ok(text, {
 						runId: res.runId,
 						scope: res.scope,
@@ -381,35 +400,75 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 						.filter((b) => b.finished)
 						.map((b) => ({
 							toolCallId: b.toolCallId,
+							ts: b.ts,
 							input: b.input as { agent?: unknown; task?: unknown },
 						}));
 					await ingestAndDrain(run);
 					const res = await manager.complete(run, params.node, ctx.cwd);
 					if (!res.ok) {
 						let err = res.error ?? "rejected";
-						if (err.includes("no execution evidence")) {
-							const specNode = run.spec.nodes[params.node];
-							const issued =
-								run.nodes[params.node]?.issuedTask ?? specNode?.task;
-							const mine = observed.filter(
-								(o) =>
-									specNode &&
-									typeof o.input.agent === "string" &&
-									o.input.agent === specNode.agent &&
-									typeof o.input.task === "string",
-							);
-							if (issued && mine.length > 0) {
-								const diag = mine
-									.map((o) => {
-										const d = firstDiff(issued, o.input.task as string);
-										return d
-											? `  subagent call ${o.toolCallId} (${o.input.agent}): ${d.replaceAll("\n", "\n  ")}`
-											: `  subagent call ${o.input.agent} ${o.toolCallId}: task matches issued payload but was not attributed (check agent name / issue time)`;
-									})
-									.join("\n");
-								err += `\n\nObserved subagent calls that did not attribute:\n${diag}\n`;
+					if (err.includes("no execution evidence")) {
+						const specNode = run.spec.nodes[params.node];
+						const node = run.nodes[params.node];
+						const issued = node?.issuedTask ?? specNode?.task;
+						const diag: string[] = [];
+
+						// 1) in-flight call (async, not finished yet) — wait, don't re-run
+						if (node && specNode && issued !== undefined) {
+							if (bufferedTouch(node, specNode) === "in-flight") {
+								diag.push(
+									`a subagent call for this node was observed but is STILL RUNNING — wait for its result, then dag_complete (unfinished calls are not attributable, H1)`,
+								);
 							}
 						}
+
+						// 2) observed finished calls that did not attribute (near-miss diff / M4 stale)
+						const mine = observed.filter(
+							(o) =>
+								specNode &&
+								typeof o.input.agent === "string" &&
+								o.input.agent === specNode.agent &&
+								typeof o.input.task === "string",
+						);
+						if (issued && mine.length > 0) {
+							for (const o of mine) {
+								if (normalizeTask(o.input.task as string) === normalizeTask(issued)) {
+									// exact payload but not attributed — the only remaining
+									// cause is M4: the call predates the current issue
+									// (e.g. it was made before a dag_retry re-issue)
+									if (node?.issueTs !== undefined && o.ts < node.issueTs) {
+										diag.push(
+											`subagent call ${o.toolCallId} matches the payload but PREDATES the current issue (re-issued at ${new Date(node.issueTs).toISOString()}) — stale calls are not attributable (M4); call subagent with the RE-ISSUED payload`,
+										);
+									} else {
+										diag.push(
+											`subagent call ${o.toolCallId} matches the issued payload but was not attributed (check agent name / issue time)`,
+										);
+									}
+								} else {
+									const d = firstDiff(issued, o.input.task as string);
+									diag.push(
+										d
+											? `subagent call ${o.toolCallId} (${o.input.agent}): ${d.replaceAll("\n", "\n  ")}`
+											: `subagent call ${o.toolCallId} (${o.input.agent}): task matches issued payload but was not attributed`,
+									);
+								}
+							}
+						}
+
+						// 3) executed-then-retried but never re-executed: attempts survived
+						// the retry (retryNode keeps attempts), so ready + attempts>0
+						// means a fresh subagent call is required
+						if (node?.state === "ready" && (node.attempts ?? 0) > 0 && diag.length === 0) {
+							diag.push(
+								`this node previously executed (attempt ${node.attempts}) but was retried — dag_retry resets the evidence clock; call subagent with the RE-ISSUED payload, then dag_complete`,
+							);
+						}
+
+						if (diag.length > 0) {
+							err += `\n\nDiagnostics:\n${diag.map((d) => `  - ${d}`).join("\n")}\n`;
+						}
+					}
 						return ok(
 							`dag_complete rejected for "${params.node}":\n${err}${autoNote(autoApproved)}${stallNote(run)}`,
 						);
@@ -425,7 +484,9 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 							`Ready batch:\n${batchText}`,
 							"",
 							PROTOCOL,
-						].join("\n") + autoNote(autoApproved) + stallNote(run),
+						].join("\n") +
+							autoNote(autoApproved) +
+							stallNote(run),
 						{ runId: params.runId, next: res.batch },
 					);
 				} catch (e) {
@@ -451,7 +512,8 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 				try {
 					requireRoots();
 					const loaded = await loadRunSwept(params.runId);
-					if ("error" in loaded) return ok(`dag_fail rejected: ${loaded.error}`);
+					if ("error" in loaded)
+						return ok(`dag_fail rejected: ${loaded.error}`);
 					const { run, autoApproved } = loaded;
 					await ingestAndDrain(run);
 					const res = await manager.fail(run, params.node, params.reason);
@@ -481,7 +543,8 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 				try {
 					requireRoots();
 					const loaded = await loadRunSwept(params.runId);
-					if ("error" in loaded) return ok(`dag_retry rejected: ${loaded.error}`);
+					if ("error" in loaded)
+						return ok(`dag_retry rejected: ${loaded.error}`);
 					const { run, autoApproved } = loaded;
 					const res = await manager.retry(run, params.node);
 					if (!res.ok) return ok(`dag_retry rejected: ${res.error}`);
@@ -510,7 +573,8 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 				try {
 					requireRoots();
 					const loaded = await loadRunSwept(params.runId);
-					if ("error" in loaded) return ok(`dag_finish rejected: ${loaded.error}`);
+					if ("error" in loaded)
+						return ok(`dag_finish rejected: ${loaded.error}`);
 					const { run, autoApproved } = loaded;
 					const res = await manager.finish(run);
 					if (!res.ok)
@@ -580,8 +644,7 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 					if (target) {
 						// sweep runs inside serial (mutates + persists)
 						const loaded = await serial(() => loadRunSwept(target));
-						if ("error" in loaded)
-							return ctx.ui.notify(loaded.error, "error");
+						if ("error" in loaded) return ctx.ui.notify(loaded.error, "error");
 						return ctx.ui.notify(
 							renderText(loaded.run) +
 								autoNote(loaded.autoApproved) +

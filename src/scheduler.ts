@@ -229,8 +229,7 @@ export function computeBatch(run: RunState): ReadyBatch {
 			// checkpoint with satisfied deps → human gate (or unattended
 			// auto-approve if the spec opted in with autoAfterSec)
 			const cp = run.spec.nodes[name]!.checkpoint;
-			const autoAfterSec =
-				typeof cp === "object" ? cp.autoAfterSec : undefined;
+			const autoAfterSec = typeof cp === "object" ? cp.autoAfterSec : undefined;
 			n.state = "awaiting_approval";
 			n.waitingSince = Date.now();
 			notes.push(
@@ -429,10 +428,7 @@ export function resolveCheckpoint(
  * no timers; the adapter sweeps on any dag tool call / resume / /dag status.
  * The AI cannot accelerate this: only wall-clock time can.
  */
-export function expireCheckpoints(
-	run: RunState,
-	now = Date.now(),
-): string[] {
+export function expireCheckpoints(run: RunState, now = Date.now()): string[] {
 	const expired: string[] = [];
 	if (run.status !== "running") return expired;
 	for (const [name, n] of Object.entries(run.nodes)) {

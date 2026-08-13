@@ -48,7 +48,7 @@ pi-dag-core 的完整设计依据。代码必须服从本契约；契约变更�
 - `running`：核心观察到匹配的 subagent 调用（`ingestCalls` 归因）
 - `failed`：证据闸不过 / subagent isError / 人工声明失败
 - `blocked`：非 continueOnError 依赖失败，且未被 retry
-- `awaiting_approval`：checkpoint 节点，仅 `/dag approve|reject`（命令）可解锁 —— **AI 无工具可自批**
+- `awaiting_approval`：checkpoint 节点，仅 `/dag approve|reject`（命令）可解锁 —— **AI 无工具可自批**。`checkpoint: { autoAfterSec }` 例外：超过阈值后由懒 sweep（任何 dag 工具 / resume / /dag status）机械性自动通过，events.jsonl 记 `auto:true`，finish 报告标记 `auto-approved`；`checkpoint: true` 永不自动
 
 循环：**loop 是节点属性**，静态图保持无环。`loop: { body, until: "passed", maxIterations }` —— body 反复执行直至产物过闸；owner 在 body 通过时置 `passed`。自由文本 `until`（LLM 判定）为 v1。
 
@@ -99,5 +99,5 @@ index.ts（pi 适配，唯一 pi 依赖）→ core.ts（RunManager 门面）→ 
 
 ## 9. 分期
 
-- **v0（已交付）**：状态机 + 证据闸（preflight 归因/执行结束/isError/产物）+ 三层级 + checkpoint + loop(passed) + 文本/mermaid + 串行化（M7）+ 停滞提醒（stallAfterSec）+ **83 测试**（单测/对抗 + 适配层 E2E，覆盖全部用户路径含循环耗竭/显式 finish/dag_fail 工具/命令错误路径/resume 已完成）+ 真实 pi 冒烟
+- **v0（已交付）**：状态机 + 证据闸（preflight 归因/执行结束/isError/产物）+ 三层级 + checkpoint + loop(passed) + 文本/mermaid + 串行化（M7）+ 停滞提醒（stallAfterSec）+ 无人值守 checkpoint（autoAfterSec）+ **89 测试**（单测/对抗 + 适配层 E2E，覆盖全部用户路径含循环耗竭/显式 finish/dag_fail 工具/命令错误路径/resume 已完成）+ 真实 pi 冒烟
 - **v1（预留）**：gate 命令 transcript 交叉验证（v0 校验拒绝 gate 字段，M9）、自由文本 until、HTML 查看器、YAML spec、subagentRunId 佐证

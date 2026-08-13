@@ -62,7 +62,17 @@ const NodeSpecSchema = Type.Object(
 				{ additionalProperties: false },
 			),
 		),
-		checkpoint: Type.Optional(Type.Boolean()),
+		checkpoint: Type.Optional(
+			Type.Union([
+				Type.Boolean(),
+				Type.Object(
+					{
+						autoAfterSec: Type.Number({ minimum: 1 }),
+					},
+					{ additionalProperties: false },
+				),
+			]),
+		),
 		loop: Type.Optional(LoopSpec),
 		continueOnError: Type.Optional(Type.Boolean()),
 	},

@@ -188,6 +188,28 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 		return { content: [{ type: "text" as const, text }], details };
 	}
 
+	/** Human-readable notice for checkpoints auto-approved by the sweep. */
+	function autoNote(autoApproved: string[]): string {
+		if (autoApproved.length === 0) return "";
+		return `\n✓ unattended: checkpoint${autoApproved.length > 1 ? "s" : ""} ${autoApproved.join(", ")} auto-approved after timeout (see events.jsonl).`;
+	}
+
+	/**
+	 * Load a run AND run the unattended checkpoint sweep (expired
+	 * auto-approve gates pass mechanically). Must be called inside serial()
+	 * — it mutates and persists. Returns the auto-approved node names so
+	 * the caller can surface them in its response.
+	 */
+	async function loadRunSwept(
+		runId: string,
+	): Promise<{ run: RunState; autoApproved: string[] } | { error: string }> {
+		const found = await loadRunAny(roots, runId);
+		if (!found) return { error: `run ${runId} not found` };
+		const run = found.run;
+		const autoApproved = await manager.sweepCheckpoints(run);
+		return { run, autoApproved };
+	}
+
 	/**
 	 * Liveness nudge (read-only): stalled nodes for a run, appended to dag
 	 * tool results and /dag status. NEVER enforcement — stalled nodes stay
@@ -306,12 +328,12 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 					if (!res.ok) return ok(`dag_start rejected:\n${res.error}`);
 					const batchText = renderBatch(res.batch!);
 					const text = [
-						`Workflow started: runId=${res.runId} (scope=${res.scope})`,
+						`Workflow started: runId=${res.runId} (scope=${res.scope})${res.resume ? " [resumed]" : ""}`,
 						"",
 						`Ready batch:\n${batchText}`,
 						"",
 						PROTOCOL,
-					].join("\n");
+					].join("\n") + autoNote(res.autoApproved ?? []);
 					return ok(text, {
 						runId: res.runId,
 						scope: res.scope,
@@ -348,8 +370,10 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 			return serial(async () => {
 				try {
 					requireRoots();
-					const run = await loadRun(params.runId);
-					if ("error" in run) return ok(`dag_complete rejected: ${run.error}`);
+					const loaded = await loadRunSwept(params.runId);
+					if ("error" in loaded)
+						return ok(`dag_complete rejected: ${loaded.error}`);
+					const { run, autoApproved } = loaded;
 					// Snapshot observed (finished) subagent calls BEFORE
 					// ingestAndDrain empties the buffer, so a rejection can show
 					// the agent exactly why attribution failed (near-miss diff).
@@ -387,7 +411,7 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 							}
 						}
 						return ok(
-							`dag_complete rejected for "${params.node}":\n${err}${stallNote(run)}`,
+							`dag_complete rejected for "${params.node}":\n${err}${autoNote(autoApproved)}${stallNote(run)}`,
 						);
 					}
 					const batchText = renderBatch(res.batch);
@@ -401,7 +425,7 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 							`Ready batch:\n${batchText}`,
 							"",
 							PROTOCOL,
-						].join("\n") + stallNote(run),
+						].join("\n") + autoNote(autoApproved) + stallNote(run),
 						{ runId: params.runId, next: res.batch },
 					);
 				} catch (e) {
@@ -426,13 +450,14 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 			return serial(async () => {
 				try {
 					requireRoots();
-					const run = await loadRun(params.runId);
-					if ("error" in run) return ok(`dag_fail rejected: ${run.error}`);
+					const loaded = await loadRunSwept(params.runId);
+					if ("error" in loaded) return ok(`dag_fail rejected: ${loaded.error}`);
+					const { run, autoApproved } = loaded;
 					await ingestAndDrain(run);
 					const res = await manager.fail(run, params.node, params.reason);
 					if (!res.ok) return ok(`dag_fail rejected: ${res.error}`);
 					return ok(
-						`✗ ${params.node} marked failed: ${params.reason}\n\nNext batch:\n${renderBatch(res.batch)}${stallNote(run)}`,
+						`✗ ${params.node} marked failed: ${params.reason}\n\nNext batch:\n${renderBatch(res.batch)}${autoNote(autoApproved)}${stallNote(run)}`,
 					);
 				} catch (e) {
 					return ok(`dag_fail error: ${(e as Error).message}`);
@@ -455,12 +480,13 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 			return serial(async () => {
 				try {
 					requireRoots();
-					const run = await loadRun(params.runId);
-					if ("error" in run) return ok(`dag_retry rejected: ${run.error}`);
+					const loaded = await loadRunSwept(params.runId);
+					if ("error" in loaded) return ok(`dag_retry rejected: ${loaded.error}`);
+					const { run, autoApproved } = loaded;
 					const res = await manager.retry(run, params.node);
 					if (!res.ok) return ok(`dag_retry rejected: ${res.error}`);
 					return ok(
-						`↻ ${params.node} re-issued. Execute with subagent, then dag_complete.\n\n${renderBatch(res.batch)}${stallNote(run)}`,
+						`↻ ${params.node} re-issued. Execute with subagent, then dag_complete.\n\n${renderBatch(res.batch)}${autoNote(autoApproved)}${stallNote(run)}`,
 					);
 				} catch (e) {
 					return ok(`dag_retry error: ${(e as Error).message}`);
@@ -483,13 +509,17 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 			return serial(async () => {
 				try {
 					requireRoots();
-					const run = await loadRun(params.runId);
-					if ("error" in run) return ok(`dag_finish rejected: ${run.error}`);
+					const loaded = await loadRunSwept(params.runId);
+					if ("error" in loaded) return ok(`dag_finish rejected: ${loaded.error}`);
+					const { run, autoApproved } = loaded;
 					const res = await manager.finish(run);
 					if (!res.ok)
 						return ok(
-							`dag_finish rejected — workflow incomplete:\n${res.report!.join("\n")}${stallNote(run)}`,
+							`dag_finish rejected — workflow incomplete:\n${res.report!.join("\n")}${autoNote(autoApproved)}${stallNote(run)}`,
 						);
+					return ok(
+						`Workflow ${params.runId} completed.\n\n${res.report!.join("\n")}${autoNote(autoApproved)}`,
+					);
 					return ok(
 						`Workflow ${params.runId} completed.\n\n${res.report!.join("\n")}`,
 					);
@@ -548,9 +578,16 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 					const runs = await listRuns(roots);
 					const target = rest[0];
 					if (target) {
-						const run = await loadRun(target);
-						if ("error" in run) return ctx.ui.notify(run.error, "error");
-						return ctx.ui.notify(renderText(run) + stallNote(run), "info");
+						// sweep runs inside serial (mutates + persists)
+						const loaded = await serial(() => loadRunSwept(target));
+						if ("error" in loaded)
+							return ctx.ui.notify(loaded.error, "error");
+						return ctx.ui.notify(
+							renderText(loaded.run) +
+								autoNote(loaded.autoApproved) +
+								stallNote(loaded.run),
+							"info",
+						);
 					}
 					if (runs.length === 0) return ctx.ui.notify("no runs yet", "info");
 					const lines = runs.map(
@@ -570,8 +607,10 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 							})();
 					if (!found || "error" in found)
 						return ctx.ui.notify("run not found", "error");
+					const loaded = await serial(() => loadRunSwept(found.runId));
+					if ("error" in loaded) return ctx.ui.notify(loaded.error, "error");
 					return ctx.ui.notify(
-						`${renderText(found) + stallNote(found)}\n\n${renderMermaid(found)}`,
+						`${renderText(loaded.run) + autoNote(loaded.autoApproved) + stallNote(loaded.run)}\n\n${renderMermaid(loaded.run)}`,
 						"info",
 					);
 				}

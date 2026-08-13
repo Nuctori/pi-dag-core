@@ -343,3 +343,97 @@ test("E2E (stall): executed-but-uncompleted sibling advises dag_complete", async
 		await t.cleanup();
 	}
 });
+
+/* ------------------------------------------------------------------ */
+/* Unattended checkpoint auto-approve (adapter level, real sleep)       */
+/* ------------------------------------------------------------------ */
+
+const AUTO_SPEC = JSON.stringify({
+	name: "e2e-auto",
+	nodes: {
+		a: { agent: "w", task: "do a" },
+		gate: { checkpoint: { autoAfterSec: 1 }, needs: ["a"] },
+		b: { agent: "w", task: "do b", needs: ["gate"] },
+	},
+});
+
+test("E2E (auto-approve): unattended checkpoint passes via resume poll", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const { runId, text } = await startRun(pi, t.dir, AUTO_SPEC);
+		const { agent, task } = toolArgs(text);
+
+		// complete a → gate awaits, note discloses the auto timeout
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-a",
+			toolName: "subagent",
+			args: { agent, task },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-a",
+			toolName: "subagent",
+			isError: false,
+		});
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const res1 = (await complete.execute(
+			"c2",
+			{ runId, node: "a" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		const out1 = res1.content[0]?.text ?? "";
+		assert.match(out1, /checkpoint "gate" reached/);
+		assert.match(out1, /auto-approves after 1s/);
+		assert.match(out1, /resumeRunId/);
+
+		// wait past the timeout, then poll with dag_start({resumeRunId})
+		await sleep(1100);
+		const start = pi.tools.find((x) => x.name === "dag_start")!;
+		const res2 = (await start.execute(
+			"c3",
+			{ resumeRunId: runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		const out2 = res2.content[0]?.text ?? "";
+		assert.match(out2, /auto-approved after timeout/);
+		assert.match(out2, /node: b/);
+
+		// complete b and finish — the report discloses the auto approval
+		const bArgs = out2.match(/node: b\s*\n {2}agent: ([^\n]+)\n {2}task: ([^\n]+)/);
+		assert.ok(bArgs, "b payload in resume batch");
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-b",
+			toolName: "subagent",
+			args: { agent: bArgs[1]!, task: bArgs[2]!.trim() },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-b",
+			toolName: "subagent",
+			isError: false,
+		});
+		const res3 = (await complete.execute(
+			"c4",
+			{ runId, node: "b" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(res3.content[0]?.text ?? "", /b passed/);
+		const finish = pi.tools.find((x) => x.name === "dag_finish")!;
+		const res4 = (await finish.execute(
+			"c5",
+			{ runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(res4.content[0]?.text ?? "", /auto-approved, unattended/);
+	} finally {
+		await t.cleanup();
+	}
+});

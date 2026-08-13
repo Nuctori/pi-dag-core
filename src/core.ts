@@ -21,6 +21,7 @@ import {
 	checkFinish,
 	computeBatch,
 	completeNode,
+	expireCheckpoints,
 	failNode,
 	isReady,
 	loopOwner,
@@ -57,6 +58,8 @@ export interface StartResult {
 	status?: string;
 	batch?: ReadyBatch;
 	resume?: boolean;
+	/** Checkpoints auto-approved by the unattended sweep (resume path). */
+	autoApproved?: string[];
 }
 
 export interface CompleteResult extends TransitionResult {
@@ -94,6 +97,9 @@ export class RunManager {
 					n.issuedTask = undefined;
 				}
 			}
+			// unattended poll: expire auto-approve checkpoints before recomputing
+			// the batch (an expired gate unblocks its dependents).
+			const autoApproved = await this.sweepCheckpoints(run);
 			const batch = computeBatch(run);
 			await persistRun(this.roots, run);
 			return {
@@ -103,6 +109,7 @@ export class RunManager {
 				status: run.status,
 				batch,
 				resume: true,
+				autoApproved,
 			};
 		}
 
@@ -172,6 +179,26 @@ export class RunManager {
 
 	/* ------------------------------ evidence ----------------------------- */
 
+	/**
+	 * Unattended checkpoint sweep: mechanically pass awaiting_approval gates
+	 * whose spec declared `checkpoint: { autoAfterSec }` and whose wait
+	 * exceeded the timeout. Lazy — the adapter calls this on any dag tool
+	 * touch / resume / /dag status; no timers. Every auto-approval lands in
+	 * the events ledger with auto:true so the audit trail shows which gates
+	 * were skipped. Returns the auto-approved node names.
+	 */
+	async sweepCheckpoints(run: RunState, now = Date.now()): Promise<string[]> {
+		const expired = expireCheckpoints(run, now);
+		for (const name of expired) {
+			await appendEvent(this.roots, run, "approved", {
+				node: name,
+				auto: true,
+				reason: "auto-approved after unattended timeout",
+			});
+		}
+		if (expired.length > 0) await persistRun(this.roots, run);
+		return expired;
+	}
 	/**
 	 * Feed captured subagent tool calls into the run: attribute to pending
 	 * payloads (launch attestation), mark nodes running, and record subagent

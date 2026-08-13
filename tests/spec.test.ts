@@ -206,3 +206,24 @@ test("stallAfterSec must be a positive number", () => {
 		assert.ok(issuesOf(bad).length > 0, `stallAfterSec=${v} must be rejected`);
 	}
 });
+
+test("checkpoint autoAfterSec form is accepted", () => {
+	const good = JSON.stringify({
+		name: "x",
+		nodes: { g: { checkpoint: { autoAfterSec: 60 } } },
+	});
+	assert.equal(issuesOf(good).length, 0);
+});
+
+test("checkpoint autoAfterSec must be positive and alone", () => {
+	const bad1 = JSON.stringify({
+		name: "x",
+		nodes: { g: { checkpoint: { autoAfterSec: 0 } } },
+	});
+	assert.ok(issuesOf(bad1).length > 0, "autoAfterSec=0 must be rejected");
+	const bad2 = JSON.stringify({
+		name: "x",
+		nodes: { g: { checkpoint: { autoAfterSec: 60, sneaky: true } } },
+	});
+	assert.ok(issuesOf(bad2).length > 0, "extra fields must be rejected");
+});

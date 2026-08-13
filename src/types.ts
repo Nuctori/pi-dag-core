@@ -53,8 +53,14 @@ export interface NodeSpec {
 	produces?: ArtifactSpec[];
 	/** v2: gate command executed by the subagent, verified via transcript scan. */
 	gate?: { command: string; expectExit?: number };
-	/** Human gate: no agent/task/produces; resolves via /dag approve|reject. */
-	checkpoint?: boolean;
+	/**
+	 * Human gate: no agent/task/produces; resolves via /dag approve|reject.
+	 * `{ autoAfterSec }` opts the gate into unattended operation: it
+	 * auto-passes mechanically once awaiting longer than the timeout
+	 * (swept on any dag tool call / resume / /dag status). Default `true` =
+	 * human-only forever.
+	 */
+	checkpoint?: boolean | { autoAfterSec: number };
 	/** Loop wrapper: re-executes body until passed or maxIterations. */
 	loop?: LoopSpec;
 	/** A failed node with continueOnError does not block its dependents. */
@@ -132,6 +138,10 @@ export interface NodeRun {
 	toolCallId?: string;
 	/** For loop nodes: current iteration (1-based), and whether body passed. */
 	iteration?: number;
+	/** Set when the node entered awaiting_approval (auto-approve clock). */
+	waitingSince?: number;
+	/** True when a checkpoint passed via unattended auto-approve timeout. */
+	autoApproved?: boolean;
 	/** Artifact hashes at pass time. */
 	artifactHashes?: Record<string, string>;
 	failReason?: string;

@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunManager } from "../src/core.js";
@@ -1023,6 +1023,142 @@ test("finish report marks a continueOnError node failed without execution", asyn
 		assert.ok(
 			fin.report!.some((l) => /never executed/.test(l)),
 			"the skip must be visible in the finish report",
+		);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+/* ------------------------------------------------------------------ */
+/* Unattended checkpoint auto-approve (autoAfterSec)                   */
+/* ------------------------------------------------------------------ */
+
+const AUTO_SPEC = JSON.stringify({
+	name: "auto-gate",
+	nodes: {
+		a: { agent: "w", task: "t1" },
+		gate: { checkpoint: { autoAfterSec: 60 }, needs: ["a"] },
+		b: { agent: "w", task: "t2", needs: ["gate"] },
+	},
+});
+
+const HUMAN_GATE_SPEC = JSON.stringify({
+	name: "human-gate",
+	nodes: {
+		a: { agent: "w", task: "t1" },
+		gate: { checkpoint: true, needs: ["a"] },
+	},
+});
+
+async function runToGate(
+	t: Awaited<ReturnType<typeof tmpRoots>>,
+	m: RunManager,
+	spec: string,
+) {
+	const s = await m.start({ spec, scope: "project" });
+	assert.ok(s.ok);
+	assert.equal(s.batch!.items.length, 1);
+	const run = (await loadRunAny(
+		{ project: t.project, user: t.user, sessionId: t.sessionId },
+		s.runId!,
+	))!.run;
+	await m.ingestCalls(run, [call("a", "w", "t1", "tc-a")]);
+	const c = await m.complete(run, "a", t.project);
+	assert.ok(c.ok, c.error);
+	assert.equal(run.nodes.gate!.state, "awaiting_approval");
+	assert.ok(run.nodes.gate!.waitingSince, "waitingSince set when gate reached");
+	return run;
+}
+
+test("auto-approve: expired gate passes via sweep; dependent becomes issuable", async () => {
+	const t = await tmpRoots();
+	try {
+		const m = new RunManager({
+			project: t.project,
+			user: t.user,
+			sessionId: t.sessionId,
+		});
+		const run = await runToGate(t, m, AUTO_SPEC);
+
+		// not expired yet — sweep is a no-op
+		assert.deepEqual(
+			await m.sweepCheckpoints(run, Date.now() + 10_000),
+			[],
+			"gate must not expire early",
+		);
+		assert.equal(run.nodes.gate!.state, "awaiting_approval");
+
+		// expired — mechanical pass, ledger entry, dependent unblocked
+		const swept = await m.sweepCheckpoints(run, Date.now() + 61_000);
+		assert.deepEqual(swept, ["gate"]);
+		assert.equal(run.nodes.gate!.state, "passed");
+		assert.equal(run.nodes.gate!.autoApproved, true);
+		assert.equal(run.nodes.gate!.waitingSince, undefined);
+		const batch = computeBatch(run);
+		assert.ok(
+			batch.items.some((i) => i.node === "b"),
+			"dependent must be issued after the gate auto-passes",
+		);
+
+		// audit trail: events.jsonl records the auto approval
+		const events = await readFile(
+			join(
+				t.project,
+				".pi",
+				"workflows",
+				"runs",
+				run.runId,
+				"events.jsonl",
+			),
+			"utf8",
+		);
+		assert.match(
+			events,
+			/"approved"[\s\S]*"auto":true[\s\S]*unattended/,
+			"auto-approval must land in the events ledger",
+		);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("auto-approve: human-only gate (checkpoint: true) never expires", async () => {
+	const t = await tmpRoots();
+	try {
+		const m = new RunManager({
+			project: t.project,
+			user: t.user,
+			sessionId: t.sessionId,
+		});
+		const run = await runToGate(t, m, HUMAN_GATE_SPEC);
+		const swept = await m.sweepCheckpoints(run, Date.now() + 86_400_000);
+		assert.deepEqual(swept, []);
+		assert.equal(run.nodes.gate!.state, "awaiting_approval");
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("auto-approve: finish report marks the skipped gate (auto-approved, unattended)", async () => {
+	const t = await tmpRoots();
+	try {
+		const m = new RunManager({
+			project: t.project,
+			user: t.user,
+			sessionId: t.sessionId,
+		});
+		const run = await runToGate(t, m, AUTO_SPEC);
+		await m.sweepCheckpoints(run, Date.now() + 61_000);
+		// the resume path recomputes the batch after the sweep — mirror it
+		computeBatch(run);
+		await m.ingestCalls(run, [call("b", "w", "t2", "tc-b")]);
+		const c = await m.complete(run, "b", t.project);
+		assert.ok(c.ok, c.error);
+		const fin = await m.finish(run);
+		assert.ok(fin.ok, fin.error);
+		assert.ok(
+			fin.report!.some((l) => /gate .*auto-approved, unattended/.test(l)),
+			"finish report must disclose the auto-approval",
 		);
 	} finally {
 		await t.cleanup();

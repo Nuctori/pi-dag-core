@@ -226,10 +226,15 @@ export function computeBatch(run: RunState): ReadyBatch {
 			run.issuedCount += 1;
 			items.push(payload);
 		} else if (run.spec.nodes[name]?.checkpoint) {
-			// checkpoint with satisfied deps → human gate
+			// checkpoint with satisfied deps → human gate (or unattended
+			// auto-approve if the spec opted in with autoAfterSec)
+			const cp = run.spec.nodes[name]!.checkpoint;
+			const autoAfterSec =
+				typeof cp === "object" ? cp.autoAfterSec : undefined;
 			n.state = "awaiting_approval";
+			n.waitingSince = Date.now();
 			notes.push(
-				`checkpoint "${name}" reached — run /dag approve ${run.runId} ${name}`,
+				`checkpoint "${name}" reached — run /dag approve ${run.runId} ${name}${autoAfterSec ? ` (auto-approves after ${autoAfterSec}s unattended — poll with dag_start({resumeRunId:"${run.runId}"}) or /dag status)` : ""}`,
 			);
 		}
 	}
@@ -394,7 +399,11 @@ export function resolveCheckpoint(
 	if (approved) {
 		n.state = "passed";
 		n.passedAt = Date.now();
+		n.waitingSince = undefined;
 	} else {
+		n.state = "failed";
+		n.failReason = reason ?? "rejected by human";
+		n.waitingSince = undefined;
 		n.state = "failed";
 		n.failReason = reason ?? "rejected by human";
 		// M1: a rejected continueOnError checkpoint is "satisfied enough" —
@@ -407,6 +416,40 @@ export function resolveCheckpoint(
 		}
 	}
 	return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
+/* Unattended checkpoint auto-approve (lazy sweep)                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Mechanically pass awaiting_approval checkpoints whose spec opted into
+ * `checkpoint: { autoAfterSec }` and whose wait exceeds the timeout.
+ * PURE and read-only on state except the approvals themselves — no I/O,
+ * no timers; the adapter sweeps on any dag tool call / resume / /dag status.
+ * The AI cannot accelerate this: only wall-clock time can.
+ */
+export function expireCheckpoints(
+	run: RunState,
+	now = Date.now(),
+): string[] {
+	const expired: string[] = [];
+	if (run.status !== "running") return expired;
+	for (const [name, n] of Object.entries(run.nodes)) {
+		if (n.state !== "awaiting_approval") continue;
+		const cp = run.spec.nodes[name]?.checkpoint;
+		if (typeof cp !== "object") continue; // human-only gate
+		const since = n.waitingSince;
+		if (since === undefined) continue;
+		if (now - since >= cp.autoAfterSec * 1000) {
+			n.state = "passed";
+			n.passedAt = now;
+			n.autoApproved = true;
+			n.waitingSince = undefined;
+			expired.push(name);
+		}
+	}
+	return expired;
 }
 
 /* ------------------------------------------------------------------ */
@@ -424,7 +467,9 @@ export function checkFinish(run: RunState): { ok: boolean; report: string[] } {
 		// M2: an explicitly-listed finish node is required even with continueOnError
 		const isRequired = requiredSet.has(name) || !specN.continueOnError;
 		if (n.state === "passed") {
-			report.push(`  ✓ ${name}`);
+			report.push(
+				`  ✓ ${name}${n.autoApproved ? " (auto-approved, unattended)" : ""}`,
+			);
 			continue;
 		}
 		if (

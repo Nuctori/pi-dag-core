@@ -146,7 +146,7 @@ pi -e ~/pi-dag-core/src/index.ts
 | `dag_finish` `dag_abort` | `/dag list` `/dag save <name>` `/dag new` `/dag help` |
 | | `/dag approve\|reject <runId> <node>`（checkpoint 唯一解锁路径） |
 
-**checkpoint 只能人解锁**：`checkpoint: true` 的节点停在 `awaiting_approval`，AI 没有工具能批准自己——命令不向 AI 暴露。
+**checkpoint 只能人解锁**：`checkpoint: true` 的节点停在 `awaiting_approval`，AI 没有工具能批准自己——命令不向 AI 暴露。**例外（显式 opt-in）**：`checkpoint: { autoAfterSec }` 声明闸门可无人值守——超过阈值后由任何 dag 工具调用 / `dag_start({resumeRunId})` 轮询 / `/dag status` 机械性自动通过（懒求值，无定时器；AI 无法加速，只有墙钟可以）。自动通过会写入 events.jsonl（`auto: true`）并在 finish 报告与文本视图标记 `auto-approved`。
 
 ## 边界（设计契约）
 
@@ -193,7 +193,7 @@ src/
 ## 测试
 
 ```bash
-npm run check   # tsc --noEmit + node --test（83 用例：单测/对抗 + 适配层 E2E 全用户路径）
+npm run check   # tsc --noEmit + node --test（89 用例：单测/对抗 + 适配层 E2E 全用户路径）
 npm test        # 仅跑测试
 ```
 

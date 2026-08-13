@@ -1,14 +1,32 @@
 {
   "name": "pi-dag-core",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Production-ready DAG workflow state machine for pi: AI orchestrates, human approves, agents follow the protocol. Execution via the subagent tool, correctness via CI-style evidence gates (state machine + payload attribution + artifact verification).",
   "type": "module",
   "license": "MIT",
-  "keywords": ["pi-package", "pi", "pi-extension", "dag", "workflow", "orchestration", "subagents", "state-machine"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "dag",
+    "workflow",
+    "orchestration",
+    "subagents",
+    "state-machine"
+  ],
   "pi": {
-    "extensions": ["./src/index.ts"]
+    "extensions": [
+      "./src/index.ts"
+    ]
   },
-  "files": ["src", "skills", "examples", "README.md", "DESIGN.md", "LICENSE"],
+  "files": [
+    "src",
+    "skills",
+    "examples",
+    "README.md",
+    "DESIGN.md",
+    "LICENSE"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",

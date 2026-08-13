@@ -1,6 +1,6 @@
 {
   "name": "pi-dag-core",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Production-ready DAG workflow state machine for pi: AI orchestrates, human approves, agents follow the protocol. Execution via the subagent tool, correctness via CI-style evidence gates (state machine + payload attribution + artifact verification).",
   "type": "module",
   "license": "MIT",

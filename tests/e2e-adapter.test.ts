@@ -6,8 +6,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { bootExtension, makePi, type MockPi } from "./helpers/mock-pi.js";
 
@@ -110,6 +110,97 @@ test("E2E: full adapter flow — start, capture, complete, finish", async () => 
 			content: { type: string; text: string }[];
 		};
 		assert.match(f.content[0]?.text ?? "", /completed/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("E2E (L-A2): subagent calls before the first dag_start are never captured", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		// a subagent call fires BEFORE any workflow exists — it can never
+		// attribute (M4) and must not be retained (sensitive args retention)
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-pre",
+			toolName: "subagent",
+			args: { agent: "scout", task: "Explore and write ctx.md" },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-pre",
+			toolName: "subagent",
+			isError: false,
+		});
+
+		const { runId } = await startRun(pi, t.dir);
+
+		// dag_complete without a post-start call → plain "no execution
+		// evidence", NO near-miss diagnostics naming the pre-start call
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const res = (await complete.execute(
+			"c2",
+			{ runId, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		const out = res.content[0]?.text ?? "";
+		assert.match(out, /no execution evidence/);
+		assert.doesNotMatch(out, /tc-pre/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("E2E (L-A3): dag_complete declaration lands in the events ledger", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const { runId, text } = await startRun(pi, t.dir);
+		const { agent, task } = toolArgs(text);
+
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-1",
+			toolName: "subagent",
+			args: { agent, task },
+		});
+		await writeFile(join(t.dir, "ctx.md"), "artifact content");
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-1",
+			toolName: "subagent",
+			isError: false,
+		});
+
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const res = (await complete.execute(
+			"c2",
+			{ runId, node: "discover", result: "all checks green" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(res.content[0]?.text ?? "", /discover passed/);
+
+		// the AI's declaration (with result) is in the audit ledger — the run
+		// is session-scoped (no scope passed to dag_start), so the ledger lives
+		// under ~/.pi/agent/workflows/runs/s-<sessionId>/
+		const ledger = await readFile(
+			join(
+				homedir(),
+				".pi",
+				"agent",
+				"workflows",
+				"runs",
+				"s-e2e-session",
+				runId,
+				"events.jsonl",
+			),
+			"utf8",
+		);
+		assert.match(ledger, /"complete"/);
+		assert.match(ledger, /all checks green/);
 	} finally {
 		await t.cleanup();
 	}
@@ -569,6 +660,181 @@ test("E2E (diag): all nodes passed but unfinished → nudge dag_finish", async (
 		const out = res3.content[0]?.text ?? "";
 		assert.match(out, /already passed/);
 		assert.match(out, /Call dag_finish/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("E2E (P0-1): one run's dag_complete must not consume another run's evidence", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const specA = JSON.stringify({
+			name: "e2e-run-a",
+			nodes: {
+				a: {
+					agent: "scout",
+					task: "task A",
+					produces: [{ path: "a.md", check: "nonEmpty" }],
+				},
+			},
+		});
+		const specB = JSON.stringify({
+			name: "e2e-run-b",
+			nodes: {
+				b: {
+					agent: "worker",
+					task: "task B",
+					produces: [{ path: "b.md", check: "nonEmpty" }],
+				},
+			},
+		});
+		const { runId: runA } = await startRun(pi, t.dir, specA);
+		const { runId: runB } = await startRun(pi, t.dir, specB);
+
+		// run B's subagent call fires AND finishes while run A is still live
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-b",
+			toolName: "subagent",
+			args: { agent: "worker", task: "task B" },
+		});
+		await writeFile(join(t.dir, "b.md"), "b content");
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-b",
+			toolName: "subagent",
+			isError: false,
+		});
+
+		// run A's dag_complete drains the session buffer — must reject on its
+		// own node without swallowing run B's finished call
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const resA = (await complete.execute(
+			"c2",
+			{ runId: runA, node: "a" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(resA.content[0]?.text ?? "", /no execution evidence/);
+
+		// run B's evidence must still be attributable afterwards
+		const resB = (await complete.execute(
+			"c3",
+			{ runId: runB, node: "b" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(resB.content[0]?.text ?? "", /b passed/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("E2E (P0-2): duplicate dag_start(resumeRunId) must not orphan finished evidence", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const spec = JSON.stringify({
+			name: "e2e-resume",
+			nodes: {
+				a: {
+					agent: "w",
+					task: "produce a.md",
+					produces: [{ path: "a.md", check: "nonEmpty" }],
+				},
+			},
+		});
+		const { runId, text } = await startRun(pi, t.dir, spec);
+		const { agent, task } = toolArgs(text);
+
+		// the node executes AND finishes, artifact in place
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-1",
+			toolName: "subagent",
+			args: { agent, task },
+		});
+		await writeFile(join(t.dir, "a.md"), "artifact content");
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-1",
+			toolName: "subagent",
+			isError: false,
+		});
+
+		// mistaken/duplicate resume fires before dag_complete
+		const start = pi.tools.find((x) => x.name === "dag_start")!;
+		const resumed = (await start.execute(
+			"c2",
+			{ resumeRunId: runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(resumed.content[0]?.text ?? "", /\[resumed\]/);
+
+		// the executed call must still be attributable — no re-execution needed
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const res = (await complete.execute(
+			"c3",
+			{ runId, node: "a" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(res.content[0]?.text ?? "", /a passed/);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("E2E (P0-3): /dag approve resolves the human gate (load inside serial queue)", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const spec = JSON.stringify({
+			name: "e2e-gate",
+			nodes: {
+				gate: { checkpoint: true },
+				work: {
+					agent: "w",
+					task: "do the work",
+					needs: ["gate"],
+					produces: [{ path: "w.md", check: "nonEmpty" }],
+				},
+			},
+		});
+		const { runId } = await startRun(pi, t.dir, spec);
+
+		// human approves the gate → work must be issued in the next batch
+		const notified = await pi.runCommand(`approve ${runId} gate`, t.dir);
+		const text = notified.map((n) => n.text).join("\n");
+		assert.match(text, /gate approved/);
+		assert.match(text, /node: work\s*\n {2}agent: w\s*\n {2}task: do the work/);
+
+		// execute the now-issued node and complete it
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-w",
+			toolName: "subagent",
+			args: { agent: "w", task: "do the work" },
+		});
+		await writeFile(join(t.dir, "w.md"), "work artifact");
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-w",
+			toolName: "subagent",
+			isError: false,
+		});
+		const complete = pi.tools.find((x) => x.name === "dag_complete")!;
+		const res = (await complete.execute(
+			"c2",
+			{ runId, node: "work" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(res.content[0]?.text ?? "", /work passed/);
 	} finally {
 		await t.cleanup();
 	}

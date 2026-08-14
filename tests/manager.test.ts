@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, mkdir, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunManager } from "../src/core.js";
@@ -237,6 +237,15 @@ test("ADVERSARIAL: stale artifact (written before issue) is rejected", async () 
 		});
 		// artifact written BEFORE the workflow starts (i.e. before any node is issued)
 		await writeArtifact(t.project, "context.md", "pre-existing file");
+		// age it well beyond the 2s freshness tolerance — "old file, new claim"
+		const old = Date.now() - 60_000;
+		try {
+			await utimes(join(t.project, "context.md"), old, old);
+		} catch {
+			// some filesystems (Windows mounts) reject utimes — sleep past the
+			// tolerance window instead
+			await new Promise((r) => setTimeout(r, 2100));
+		}
 		const s = await m.start({ spec: SIMPLE });
 		const d = s.batch!.items[0]!;
 		const run = (await loadRunAny(
@@ -1153,6 +1162,31 @@ test("auto-approve: finish report marks the skipped gate (auto-approved, unatten
 			fin.report!.some((l) => /gate .*auto-approved, unattended/.test(l)),
 			"finish report must disclose the auto-approval",
 		);
+	} finally {
+		await t.cleanup();
+	}
+});
+
+test("P0-5: finish on an aborted run is rejected (status guard)", async () => {
+	const t = await tmpRoots();
+	try {
+		const m = new RunManager({
+			project: t.project,
+			user: t.user,
+			sessionId: t.sessionId,
+		});
+		const s = await m.start({ spec: SIMPLE });
+		const run = (await loadRunAny(
+			{ project: t.project, user: t.user, sessionId: t.sessionId },
+			s.runId!,
+		))!.run;
+		const ab = await m.abort(run, "not worth it");
+		assert.ok(ab.ok, ab.error);
+		assert.equal(run.status, "aborted");
+
+		const fin = await m.finish(run);
+		assert.ok(!fin.ok);
+		assert.match(fin.error!, /aborted, not running/);
 	} finally {
 		await t.cleanup();
 	}

@@ -18,6 +18,7 @@ import {
 	readdir,
 	rm,
 	open,
+	stat,
 } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
@@ -97,8 +98,9 @@ async function atomicWrite(file: string, data: string): Promise<void> {
 	await mkdir(dirname(file), { recursive: true });
 	// L8: unique temp name (no shared ${pid}.tmp collisions) + fsync before
 	// rename so a power loss cannot leave a truncated snapshot as the target.
+	// 0o600: snapshots/definitions embed the full task text — never world-readable.
 	const tmp = `${file}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-	const fh = await open(tmp, "w");
+	const fh = await open(tmp, "w", 0o600);
 	try {
 		await fh.writeFile(data, "utf8");
 		await fh.sync();
@@ -106,6 +108,23 @@ async function atomicWrite(file: string, data: string): Promise<void> {
 		await fh.close();
 	}
 	await rename(tmp, file);
+	// P1: fsync the parent directory so the rename itself is durable —
+	// without it a power loss can silently roll back the last transition.
+	await syncDir(dirname(file));
+}
+
+/** Best-effort directory fsync (POSIX durability for rename; Windows lacks it). */
+async function syncDir(dir: string): Promise<void> {
+	try {
+		const fh = await open(dir, "r");
+		try {
+			await fh.sync();
+		} finally {
+			await fh.close();
+		}
+	} catch {
+		// unsupported platform — file-level fsync still guards the bytes
+	}
 }
 
 /* ------------------------------------------------------------------ */
@@ -187,6 +206,9 @@ export async function persistRun(r: Roots, run: RunState): Promise<void> {
 	await atomicWrite(join(dir, "snapshot.json"), JSON.stringify(run, null, 2));
 }
 
+/** Audit-log rotation ceiling: past this size the ledger rolls to events.1.jsonl (latest two generations). */
+const MAX_EVENT_LOG = 2 * 1024 * 1024;
+
 /** Append an audit event (best-effort; never throws into the session). */
 export async function appendEvent(
 	r: Roots,
@@ -197,10 +219,18 @@ export async function appendEvent(
 	try {
 		const dir = runDir(r, run.scope, run.runId);
 		await mkdir(dir, { recursive: true });
+		const file = join(dir, "events.jsonl");
+		const st = await stat(file).catch(() => null);
+		if (st && st.size > MAX_EVENT_LOG) {
+			// L-R2: rotate instead of growing unboundedly; best-effort like the
+			// append itself (snapshot remains authoritative either way).
+			await rename(file, join(dir, "events.1.jsonl")).catch(() => {});
+		}
 		await writeFile(
-			join(dir, "events.jsonl"),
+			file,
 			JSON.stringify({ ts: Date.now(), type, runId: run.runId, data }) + "\n",
-			{ flag: "a" },
+			// 0o600: audit entries embed task text / reasons — never world-readable.
+			{ flag: "a", mode: 0o600 },
 		);
 	} catch {
 		// audit trail is best-effort; snapshot remains authoritative
@@ -215,6 +245,12 @@ export async function loadRun(
 	try {
 		const file = join(runDir(r, scope, runId), "snapshot.json");
 		const raw = JSON.parse(await readFile(file, "utf8")) as RunState;
+		// P1: re-validate the embedded spec on load — a tampered snapshot can
+		// otherwise smuggle an invalid spec (incl. a pathological grep pattern
+		// that hangs dag_complete) past the startup gate. Corrupt → treated as
+		// not found, which is also the honest answer for a bad snapshot.
+		const v = validateSpec(raw.spec);
+		if (!v.ok) return null;
 		return raw;
 	} catch {
 		return null;

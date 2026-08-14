@@ -31,15 +31,11 @@ import {
 	listDefinitions,
 	listRuns,
 	loadRunAny,
+	appendEvent,
 	type Roots,
 } from "./state.js";
 import { renderMermaid, renderText } from "./viz.js";
-import type {
-	NodeRun,
-	NodeSpec,
-	ReadyBatch,
-	RunState,
-} from "./types.js";
+import type { NodeRun, NodeSpec, ReadyBatch, RunState } from "./types.js";
 
 const SUBAGENT_TOOL = "subagent";
 const MAX_BUFFER = 200;
@@ -79,6 +75,13 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 	let buffer: CapturedCall[] = [];
 	/** Inline spec from the most recent dag_start (for /dag save). */
 	let lastInlineSpec: string | undefined;
+	/**
+	 * L-A2: capture gate. Subagent calls are only observed while this session
+	 * has started a workflow — a call before the first dag_start can never be
+	 * attributed (M4: ts ≥ issueTs), so capturing it would retain possibly-
+	 * sensitive args for nothing. Set on successful dag_start (incl. resume).
+	 */
+	let captureActive = false;
 
 	function requireRoots() {
 		// roots are set at session_start; defensive fallback
@@ -113,9 +116,10 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 		buffer = [];
 	});
 
-	// Trigger mechanism: ship the dag-workflow SKILL with the extension so the
-	// model has a WHEN-to-use reference it can self-activate from (the skill
-	// description is the trigger surface; the 5 protocol guidelines cover HOW).
+	pi.on("session_shutdown", async () => {
+		buffer = [];
+		captureActive = false;
+	});
 	pi.on("resources_discover", async () => {
 		return {
 			skillPaths: [fileURLToPath(new URL("../skills", import.meta.url))],
@@ -131,7 +135,10 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 	// closes the parallel-batching race (subagent + dag_complete in one message:
 	// dag_complete would otherwise drain an empty buffer).
 	pi.on("tool_execution_start", (event) => {
-		if (event.toolName !== SUBAGENT_TOOL) return;
+		// L-A2: observe only while this session has an active workflow — a call
+		// before the first dag_start can never attribute (M4) and is pure
+		// retention of possibly-sensitive args.
+		if (event.toolName !== SUBAGENT_TOOL || !captureActive) return;
 		try {
 			buffer.push({
 				toolCallId: event.toolCallId,
@@ -186,7 +193,18 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 				finished: true,
 			}),
 		);
-		return manager.ingestCalls(run, invocations);
+		const attributed = await manager.ingestCalls(run, invocations);
+		// P0-1: the buffer is session-global but runs are per-workflow. Calls
+		// that did NOT attribute to THIS run must survive the drain, or a
+		// concurrent run's evidence is permanently lost and its node is forced
+		// into a double execution. Unmatched calls stay buffered (bounded by
+		// MAX_BUFFER) for the run that owns them; a partially-attributed
+		// tasks[] call (shared toolCallId) is kept as attributed — its leftover
+		// invocations cannot match later anyway (M4 issueTs moves forward).
+		const attributedIds = new Set(attributed.map((a) => a.toolCallId));
+		const orphaned = finished.filter((c) => !attributedIds.has(c.toolCallId));
+		if (orphaned.length > 0) buffer = buffer.concat(orphaned);
+		return attributed;
 	}
 
 	function ok(text: string, details: Record<string, unknown> = {}) {
@@ -337,13 +355,29 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 			return serial(async () => {
 				try {
 					requireRoots();
+					// P0-2: attribute finished calls already in the session buffer
+					// BEFORE resume re-issues. A duplicate dag_start(resumeRunId)
+					// (message replay / mistaken retry) must not orphan executed
+					// evidence and force a double execution. Attributed nodes are
+					// passed as keepRunning so the reset skips them.
+					let keepRunning: string[] = [];
+					if (params.resumeRunId) {
+						const loaded = await loadRun(params.resumeRunId);
+						if (!("error" in loaded)) {
+							const attributed = await ingestAndDrain(loaded);
+							keepRunning = attributed.map((a) => a.node);
+						}
+					}
 					if (params.spec) lastInlineSpec = params.spec;
 					const res = await manager.start({
 						spec: params.spec,
 						specName: params.specName,
 						resumeRunId: params.resumeRunId,
+						keepRunning,
 					});
 					if (!res.ok) return ok(`dag_start rejected:\n${res.error}`);
+					// L-A2: from here on the session observes subagent calls.
+					captureActive = true;
 					const batchText = renderBatch(res.batch!);
 					const text =
 						[
@@ -405,70 +439,84 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 						}));
 					await ingestAndDrain(run);
 					const res = await manager.complete(run, params.node, ctx.cwd);
+					// L-A3: the AI's completion declaration (and its verdict) belongs
+					// in the audit ledger, accepted or rejected.
+					await appendEvent(roots, run, "complete", {
+						node: params.node,
+						result: params.result,
+						passed: res.ok,
+					});
 					if (!res.ok) {
 						let err = res.error ?? "rejected";
-					if (err.includes("no execution evidence")) {
-						const specNode = run.spec.nodes[params.node];
-						const node = run.nodes[params.node];
-						const issued = node?.issuedTask ?? specNode?.task;
-						const diag: string[] = [];
+						if (err.includes("no execution evidence")) {
+							const specNode = run.spec.nodes[params.node];
+							const node = run.nodes[params.node];
+							const issued = node?.issuedTask ?? specNode?.task;
+							const diag: string[] = [];
 
-						// 1) in-flight call (async, not finished yet) — wait, don't re-run
-						if (node && specNode && issued !== undefined) {
-							if (bufferedTouch(node, specNode) === "in-flight") {
-								diag.push(
-									`a subagent call for this node was observed but is STILL RUNNING — wait for its result, then dag_complete (unfinished calls are not attributable, H1)`,
-								);
-							}
-						}
-
-						// 2) observed finished calls that did not attribute (near-miss diff / M4 stale)
-						const mine = observed.filter(
-							(o) =>
-								specNode &&
-								typeof o.input.agent === "string" &&
-								o.input.agent === specNode.agent &&
-								typeof o.input.task === "string",
-						);
-						if (issued && mine.length > 0) {
-							for (const o of mine) {
-								if (normalizeTask(o.input.task as string) === normalizeTask(issued)) {
-									// exact payload but not attributed — the only remaining
-									// cause is M4: the call predates the current issue
-									// (e.g. it was made before a dag_retry re-issue)
-									if (node?.issueTs !== undefined && o.ts < node.issueTs) {
-										diag.push(
-											`subagent call ${o.toolCallId} matches the payload but PREDATES the current issue (re-issued at ${new Date(node.issueTs).toISOString()}) — stale calls are not attributable (M4); call subagent with the RE-ISSUED payload`,
-										);
-									} else {
-										diag.push(
-											`subagent call ${o.toolCallId} matches the issued payload but was not attributed (check agent name / issue time)`,
-										);
-									}
-								} else {
-									const d = firstDiff(issued, o.input.task as string);
+							// 1) in-flight call (async, not finished yet) — wait, don't re-run
+							if (node && specNode && issued !== undefined) {
+								if (bufferedTouch(node, specNode) === "in-flight") {
 									diag.push(
-										d
-											? `subagent call ${o.toolCallId} (${o.input.agent}): ${d.replaceAll("\n", "\n  ")}`
-											: `subagent call ${o.toolCallId} (${o.input.agent}): task matches issued payload but was not attributed`,
+										`a subagent call for this node was observed but is STILL RUNNING — wait for its result, then dag_complete (unfinished calls are not attributable, H1)`,
 									);
 								}
 							}
-						}
 
-						// 3) executed-then-retried but never re-executed: attempts survived
-						// the retry (retryNode keeps attempts), so ready + attempts>0
-						// means a fresh subagent call is required
-						if (node?.state === "ready" && (node.attempts ?? 0) > 0 && diag.length === 0) {
-							diag.push(
-								`this node previously executed (attempt ${node.attempts}) but was retried — dag_retry resets the evidence clock; call subagent with the RE-ISSUED payload, then dag_complete`,
+							// 2) observed finished calls that did not attribute (near-miss diff / M4 stale)
+							const mine = observed.filter(
+								(o) =>
+									specNode &&
+									typeof o.input.agent === "string" &&
+									o.input.agent === specNode.agent &&
+									typeof o.input.task === "string",
 							);
-						}
+							if (issued && mine.length > 0) {
+								for (const o of mine) {
+									if (
+										normalizeTask(o.input.task as string) ===
+										normalizeTask(issued)
+									) {
+										// exact payload but not attributed — the only remaining
+										// cause is M4: the call predates the current issue
+										// (e.g. it was made before a dag_retry re-issue)
+										if (node?.issueTs !== undefined && o.ts < node.issueTs) {
+											diag.push(
+												`subagent call ${o.toolCallId} matches the payload but PREDATES the current issue (re-issued at ${new Date(node.issueTs).toISOString()}) — stale calls are not attributable (M4); call subagent with the RE-ISSUED payload`,
+											);
+										} else {
+											diag.push(
+												`subagent call ${o.toolCallId} matches the issued payload but was not attributed (check agent name / issue time)`,
+											);
+										}
+									} else {
+										const d = firstDiff(issued, o.input.task as string);
+										diag.push(
+											d
+												? `subagent call ${o.toolCallId} (${o.input.agent}): ${d.replaceAll("\n", "\n  ")}`
+												: `subagent call ${o.toolCallId} (${o.input.agent}): task matches issued payload but was not attributed`,
+										);
+									}
+								}
+							}
 
-						if (diag.length > 0) {
-							err += `\n\nDiagnostics:\n${diag.map((d) => `  - ${d}`).join("\n")}\n`;
+							// 3) executed-then-retried but never re-executed: attempts survived
+							// the retry (retryNode keeps attempts), so ready + attempts>0
+							// means a fresh subagent call is required
+							if (
+								node?.state === "ready" &&
+								(node.attempts ?? 0) > 0 &&
+								diag.length === 0
+							) {
+								diag.push(
+									`this node previously executed (attempt ${node.attempts}) but was retried — dag_retry resets the evidence clock; call subagent with the RE-ISSUED payload, then dag_complete`,
+								);
+							}
+
+							if (diag.length > 0) {
+								err += `\n\nDiagnostics:\n${diag.map((d) => `  - ${d}`).join("\n")}\n`;
+							}
 						}
-					}
 						return ok(
 							`dag_complete rejected for "${params.node}":\n${err}${autoNote(autoApproved)}${stallNote(run)}`,
 						);
@@ -583,9 +631,6 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 						);
 					return ok(
 						`Workflow ${params.runId} completed.\n\n${res.report!.join("\n")}${autoNote(autoApproved)}`,
-					);
-					return ok(
-						`Workflow ${params.runId} completed.\n\n${res.report!.join("\n")}`,
 					);
 				} catch (e) {
 					return ok(`dag_finish error: ${(e as Error).message}`);
@@ -712,19 +757,21 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 					const node = rest[1];
 					if (!runId || !node)
 						return ctx.ui.notify(`usage: /dag ${sub} <runId> <node>`, "error");
-					const run = await loadRun(runId);
-					if ("error" in run) return ctx.ui.notify(run.error, "error");
-					// M7: approve/reject mutates run state — same serial queue as
-					// the AI-facing tools (human gate racing dag_complete would
-					// otherwise last-write-wins on the snapshot).
-					const res = await serial(() =>
-						manager.resolveCheckpoint(
+					// P0-3: LOAD inside the serial queue too. The M7 atomicity
+					// claim (load→mutate→persist) only holds when the load is
+					// in-queue; loading outside lets a dag_complete persist
+					// between this load and the queued mutate, and the stale
+					// snapshot written here rolls back its transition.
+					const res = await serial(async () => {
+						const run = await loadRun(runId);
+						if ("error" in run) return { ok: false as const, error: run.error };
+						return manager.resolveCheckpoint(
 							run,
 							node,
 							sub === "approve",
 							rest.slice(2).join(" ") || undefined,
-						),
-					);
+						);
+					});
 					if (!res.ok)
 						return ctx.ui.notify(`checkpoint: ${res.error}`, "error");
 					return ctx.ui.notify(

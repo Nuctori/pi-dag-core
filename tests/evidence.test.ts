@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -241,7 +241,14 @@ test("P0-regression: a freshly created EMPTY directory passes the default exists
 		// an empty dir whose mtime predates the issue must still fail freshness
 		const staleDir = join(dir, "stale");
 		await mkdir(staleDir);
-		await new Promise((r) => setTimeout(r, 5));
+		const old = Date.now() - 60_000; // well beyond the 2s freshness tolerance
+		try {
+			await utimes(staleDir, old, old);
+		} catch {
+			// some filesystems (Windows mounts) reject utimes — sleep past the
+			// tolerance window instead
+			await new Promise((r) => setTimeout(r, 2100));
+		}
 		const res2 = await checkArtifacts(
 			dir,
 			{ ...specNode, produces: [{ path: "stale/" }] },
@@ -270,6 +277,30 @@ test("MISSING artifact detail teaches the resolved absolute path (cwd ambiguity)
 			"detail must name the exact resolved path (the cwd-mismatch case)",
 		);
 		assert.match(detail, /RELATIVE to the session cwd/);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("P0-4: invalid grep pattern fails the gate with the real reason", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "dag-evidence-"));
+	try {
+		const issuedAt = Date.now();
+		const specNode: NodeSpec = {
+			agent: "w",
+			task: "t",
+			produces: [{ path: "a.md", check: "grep:(" }],
+		};
+		await new Promise((r) => setTimeout(r, 5)); // mtime strictly after issuedAt
+		await writeFile(join(dir, "a.md"), "anything");
+
+		const res = await checkArtifacts(dir, specNode, issuedAt);
+		assert.equal(res.ok, false);
+		assert.match(
+			res.evidence[0]!.detail ?? "",
+			/invalid grep pattern/,
+			"diagnostic must name the invalid pattern, not lie 'not found'",
+		);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

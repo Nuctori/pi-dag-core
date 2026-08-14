@@ -15,6 +15,7 @@ import type {
 	NodeSpec,
 	Policy,
 } from "./types.js";
+import { normalizeTask } from "./evidence.js";
 
 /* ------------------------------------------------------------------ */
 /* Typebox schema — the same schema used at runtime.                    */
@@ -225,13 +226,58 @@ function validateGraph(s: Spec): ValidationIssue[] {
 			}
 			seenProduce.add(a.path);
 			// L4: keep grep patterns bounded (ReDoS / accidental megabyte regexes)
-			if (a.check?.startsWith("grep:") && a.check.length > 220) {
-				issue(
-					issues,
-					`${p}.produces`,
-					`grep pattern too long (${a.check.length} chars, max 220)`,
-				);
+			if (a.check?.startsWith("grep:")) {
+				const pattern = a.check.slice(5);
+				if (a.check.length > 220) {
+					issue(
+						issues,
+						`${p}.produces`,
+						`grep pattern too long (${a.check.length} chars, max 220)`,
+					);
+				}
+				// P0-4: a grep check must be a non-empty COMPILABLE pattern —
+				// otherwise the gate fails with a lying "not found" diagnostic
+				// and forces a needless re-run. (Pathological-but-valid patterns
+				// remain possible; snapshot re-validation on load closes the
+				// tampered-snapshot path — see P1.)
+				if (pattern.length === 0) {
+					issue(
+						issues,
+						`${p}.produces`,
+						`grep pattern is empty — provide a pattern after "grep:"`,
+					);
+				} else {
+					try {
+						new RegExp(pattern);
+					} catch {
+						issue(
+							issues,
+							`${p}.produces`,
+							`grep pattern is not a valid regular expression: "${pattern}"`,
+						);
+					}
+				}
 			}
+		}
+	}
+
+	// P1: duplicate agent+task payloads break parallel tasks[] attribution —
+	// the dedupe key (toolCallId|agent|task) collides and the second node can
+	// never be attributed (it stays ready forever). Reject at spec time, using
+	// the same normalization the attribution path uses.
+	const payloads = new Map<string, string>();
+	for (const [name, n] of Object.entries(s.nodes)) {
+		if (!n.agent || !n.task) continue; // checkpoint / loop owner
+		const key = `${n.agent}\u0000${normalizeTask(n.task)}`;
+		const prev = payloads.get(key);
+		if (prev) {
+			issue(
+				issues,
+				`nodes.${name}`,
+				`duplicate agent+task payload as node "${prev}" — parallel attribution would collide; make the task text distinct`,
+			);
+		} else {
+			payloads.set(key, name);
 		}
 	}
 
@@ -353,10 +399,23 @@ function validateGraph(s: Spec): ValidationIssue[] {
 		}
 	}
 
-	// finish must reference existing nodes
+	// finish must reference existing nodes (P1: loop bodies are internal —
+	// list the loop owner instead, the body only passes through the owner)
 	for (const f of s.finish ?? []) {
-		if (!names.has(f))
+		if (!names.has(f)) {
 			issue(issues, `finish`, `finish node "${f}" does not exist`);
+		} else {
+			const owner = Object.entries(s.nodes).find(
+				([, n]) => n.loop?.body === f,
+			);
+			if (owner) {
+				issue(
+					issues,
+					`finish`,
+					`finish node "${f}" is a loop body (internal to "${owner[0]}") — list the loop owner instead`,
+				);
+			}
+		}
 	}
 
 	return issues;

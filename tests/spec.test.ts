@@ -227,3 +227,54 @@ test("checkpoint autoAfterSec must be positive and alone", () => {
 	});
 	assert.ok(issuesOf(bad2).length > 0, "extra fields must be rejected");
 });
+
+test("P0-4: empty grep pattern is rejected at spec validation", () => {
+	const bad = JSON.stringify({
+		name: "x",
+		nodes: {
+			a: {
+				agent: "w",
+				task: "t",
+				produces: [{ path: "a.md", check: "grep:" }],
+			},
+		},
+	});
+	assert.match(issuesOf(bad).join(" "), /grep pattern is empty/);
+});
+
+test("P0-4: invalid grep regex is rejected at spec validation", () => {
+	const bad = JSON.stringify({
+		name: "x",
+		nodes: {
+			a: {
+				agent: "w",
+				task: "t",
+				produces: [{ path: "a.md", check: "grep:(" }],
+			},
+		},
+	});
+	assert.match(issuesOf(bad).join(" "), /not a valid regular expression/);
+});
+
+test("P1: duplicate agent+task payloads are rejected", () => {
+	const bad = JSON.stringify({
+		name: "x",
+		nodes: {
+			a: { agent: "w", task: "do the same thing" },
+			b: { agent: "w", task: "do the same thing" },
+		},
+	});
+	assert.match(issuesOf(bad).join(" "), /duplicate agent\+task payload/);
+});
+
+test("P1: finish cannot reference a loop body", () => {
+	const bad = JSON.stringify({
+		name: "x",
+		finish: ["body"],
+		nodes: {
+			loop: { agent: "w", loop: { body: "body", maxIterations: 2 } },
+			body: { agent: "w", task: "t" },
+		},
+	});
+	assert.match(issuesOf(bad).join(" "), /is a loop body/);
+});

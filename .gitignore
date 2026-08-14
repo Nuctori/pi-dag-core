@@ -5,6 +5,13 @@ node_modules/
 .pi/workflows/runs/
 .pi/workflows/.state*.json
 
+# workflow definitions ARE versioned (DESIGN.md §6); keep the rest of .pi/
+# ignored (session data, decision chain, user decisions)
+.pi/*
+!.pi/workflows/
+.pi/workflows/*
+!.pi/workflows/*.json
+
 # logs / tmp
 *.log
 *.tmp
@@ -13,5 +20,4 @@ node_modules/
 .DS_Store
 .vscode/
 .idea/
-.pi/
 .pi-subagents/

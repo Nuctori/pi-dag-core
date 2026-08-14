@@ -48,6 +48,12 @@ export interface StartOptions {
 	specName?: string;
 	resumeRunId?: string;
 	scope?: Scope;
+	/**
+	 * P0-2: nodes that carry freshly-attributed finished evidence (the adapter
+	 * drained the session buffer before resume). These are NOT re-queued —
+	 * resetting them would orphan the evidence and force a double execution.
+	 */
+	keepRunning?: string[];
 }
 
 export interface StartResult {
@@ -88,8 +94,13 @@ export class RunManager {
 			// session re-issues their payloads. Otherwise they are unreachable:
 			// dag_complete requires "running", but no new session can ever
 			// attribute evidence to them.
-			for (const n of Object.values(run.nodes)) {
-				if (n.state === "running" || n.state === "ready") {
+			// P0-2: nodes in opts.keepRunning carry freshly-attributed finished
+			// evidence and stay running — dag_complete can consume it right away.
+			for (const [name, n] of Object.entries(run.nodes)) {
+				if (
+					(n.state === "running" || n.state === "ready") &&
+					!opts.keepRunning?.includes(name)
+				) {
 					n.state = "queued";
 					n.issueTs = undefined;
 					n.toolCallId = undefined;
@@ -300,9 +311,16 @@ export class RunManager {
 			);
 		}
 
-		// artifact gates (CI evidence)
+		// artifact gates (CI evidence); freshness anchored to the OBSERVED
+		// execution start (F8) — a retried node's artifacts were written during
+		// the run, not at re-issue time
 		const specNode = run.spec.nodes[node]!;
-		const art = await checkArtifacts(artifactRoot, specNode, n.issueTs ?? 0);
+		const art = await checkArtifacts(
+			artifactRoot,
+			specNode,
+			n.issueTs ?? 0,
+			n.executedTs,
+		);
 		const evidenceReport = art.evidence.length
 			? formatEvidence(art.evidence)
 			: "(no declared produces)";
@@ -317,9 +335,11 @@ export class RunManager {
 				node,
 				reason: "artifact gates",
 			});
-			await persistRun(this.roots, run);
 			// recompute: loop bodies get re-issued; dependents get blocked
 			const batch = computeBatch(run);
+			// L-R1: single persist per transition — the intermediate write had no
+			// readers, and a crash in between only leaves the pre-transition
+			// (safer) snapshot behind.
 			await persistRun(this.roots, run);
 			return {
 				ok: false,
@@ -357,7 +377,6 @@ export class RunManager {
 			node,
 			artifacts: art.hashes,
 		});
-		await persistRun(this.roots, run);
 		const batch = computeBatch(run);
 		await persistRun(this.roots, run);
 		return { ok: true, evidenceReport, passed: true, batch, run };
@@ -385,7 +404,6 @@ export class RunManager {
 		}
 		failNode(run, node, reason);
 		await appendEvent(this.roots, run, "failed", { node, reason });
-		await persistRun(this.roots, run);
 		const batch = computeBatch(run);
 		await persistRun(this.roots, run);
 		return { ok: true, batch, run };
@@ -402,7 +420,6 @@ export class RunManager {
 		const res = retryNode(run, node);
 		if (!res.ok) return this.transitionError(run, res.error!);
 		await appendEvent(this.roots, run, "retry", { node });
-		await persistRun(this.roots, run);
 		const batch = computeBatch(run);
 		await persistRun(this.roots, run);
 		return { ok: true, batch, run };
@@ -427,7 +444,6 @@ export class RunManager {
 			node,
 			reason,
 		});
-		await persistRun(this.roots, run);
 		const batch = computeBatch(run);
 		await persistRun(this.roots, run);
 		return { ok: true, batch, run };
@@ -441,6 +457,15 @@ export class RunManager {
 		report?: string[];
 		run: RunState;
 	}> {
+		// P0-5: same status guard as complete/retry/fail/abort — an aborted or
+		// already-completed run must not be flipped to completed.
+		if (run.status !== "running") {
+			return {
+				ok: false,
+				error: `run is ${run.status}, not running — cannot finish`,
+				run,
+			};
+		}
 		const { ok, report } = checkFinish(run);
 		if (!ok) {
 			return {

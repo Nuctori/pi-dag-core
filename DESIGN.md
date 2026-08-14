@@ -19,7 +19,7 @@ pi-dag-core 的完整设计依据。代码必须服从本契约；契约变更�
 | 注入 | 工具使用 guidelines（协议 5 条） | `before_agent_start` / `context` / provider 一律不碰 |
 | 拦截 | 无 | 永不 block / mutate `event.input` / 改写 `tool_result` |
 
-订阅是只读观察通道；`events.jsonl` 是状态机的账本（私产），不是对 pi 行为的修改。
+订阅是只读观察通道；`events.jsonl` 是状态机的账本（私产），不是对 pi 行为的修改。观察是惰性的：仅在本会话 `dag_start` 成功后捕获 subagent 调用（更早的调用因 M4 永不可归因，捕获纯属滞留敏感参数）；捕获缓冲会话级、有界（200 条）。运行态与定义文件一律 0o600（含完整 task 文本，不对外可读）。
 
 ## 3. 正确性矩阵
 
@@ -36,7 +36,7 @@ pi-dag-core 的完整设计依据。代码必须服从本契约；契约变更�
 | 盘符/符号链接逃逸（M5/M6） | spec 路径校验 + realpath 包含检查 | 硬 |
 | 结果语义错误 | verifier 节点（`{artifacts}` 扇入）+ checkpoint 人工门 | 软（人/验证器） |
 | spec 被 AI 自肥 | typebox 严格 schema + 拓扑/角色规则 + 运行中 spec 不可变 | 硬 |
-| 崩溃/重启 | snapshot 原子写（fsync）+ events.jsonl 审计；resume 重置 running/**ready**→queued 后重签发（B3） | 硬 |
+| 崩溃/重启 | snapshot 原子写（fsync）+ events.jsonl 审计；resume 重置 running/**ready**→queued 后重签发（B3） | 硬（快照）；events.jsonl 为非原子 append，崩溃可能留尾部撕裂行——审计账本尽力而为，快照始终权威（>2MB 轮转 events.1.jsonl，保留最近两代） |
 | 路径逃逸 | `safeName` 消毒 + `underRoot` 逃逸检查 | 硬 |
 | 快照伪造（M8） | **信任模型：机器不防御执行者篡改自己的状态文件** —— 文档明确 | 说明 |
 
@@ -50,7 +50,7 @@ pi-dag-core 的完整设计依据。代码必须服从本契约；契约变更�
 - `blocked`：非 continueOnError 依赖失败，且未被 retry
 - `awaiting_approval`：checkpoint 节点，仅 `/dag approve|reject`（命令）可解锁 —— **AI 无工具可自批**。`checkpoint: { autoAfterSec }` 例外：超过阈值后由懒 sweep（任何 dag 工具 / resume / /dag status）机械性自动通过，events.jsonl 记 `auto:true`，finish 报告标记 `auto-approved`；`checkpoint: true` 永不自动
 
-循环：**loop 是节点属性**，静态图保持无环。`loop: { body, until: "passed", maxIterations }` —— body 反复执行直至产物过闸；owner 在 body 通过时置 `passed`。自由文本 `until`（LLM 判定）为 v1。
+循环：**loop 是节点属性**，静态图保持无环。`loop: { body, until: "passed", maxIterations }` —— body 反复执行直至产物过闸；owner 在 body 通过时置 `passed`。自由文本 `until`（LLM 判定）为 v1。`maxIterations` 硬顶按 burst 计：`dag_retry` 会重置迭代计数并重新武装 body（run 级持久计数为 v1 预留），耗竭→retry→耗竭仅受签发配额约束。
 
 ### 停滞提醒（stall nudge，只读 liveness）
 
@@ -65,8 +65,10 @@ liveness（推进）是执行者的协议义务，状态机不强制——但提
 启动证明（tool_execution_start, 参数归一化匹配 + 时序）→ 执行结束（tool_execution_end, isError）→ 产物（存在/mtime/hash/realpath）
 
 - 归因不依赖 AI 自报 run-id：核心订阅 `tool_execution_start`（preflight，按源顺序先行发射）观察真实调用，按签发 payload 归一化匹配（引号字形归一 + 空白折叠；实质改动拒绝）
+- **执行语义：at-least-once** —— retry / resume / 崩溃后重签发会重新执行 subagent；produce 声明的产物有 mtime/内容闸防旧交差，但 produce 之外的副作用（API、DB、外部系统）**必然可能重复**。节点幂等是 spec 作者的义务（执行去重为 v1 预留）
 - **H1：未结束的调用（无 execution_end）不可归因** → dag_complete 被拒；禁止与 subagent 同消息批处理
 - 并行 `tasks[]` 共享 toolCallId，去重键 = `toolCallId|agent|task`；归因要求 `ts ≥ issuedAt`（M4 防陈旧事件）
+- 每次 `dag_complete` 声明（含 result 与闸门裁决）以 `complete` 事件入账——AI 的完成声明与证据闸裁决同账可对质
 - verifier 节点：`{artifacts}` 占位符在签发时替换为依赖产物路径 + sha256
 
 ## 6. 三层级与写入域

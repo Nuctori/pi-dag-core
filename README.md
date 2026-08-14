@@ -171,14 +171,14 @@ src/
 ├── index.ts      pi 适配层（工具/命令/订阅/注入）—— 唯一碰 pi 运行时的文件
 ├── core.ts       RunManager 门面（调度 + 证据 + 状态的编排）
 ├── spec.ts       校验（typebox + 拓扑：环/缺依赖/重名/角色规则/产物重叠）
-├── scheduler.ts  状态机（queued→ready→running→passed|failed|blocked，纯逻辑）
+│ ├── scheduler.ts  状态机（queued→ready→running→passed|failed|blocked，无 I/O 原地转移）
 ├── evidence.ts   证据链（payload 匹配 / isError / 产物闸）
 ├── state.ts      唯一写模块（路径白名单 + 原子写 + events.jsonl 审计 + 快照恢复）
 ├── viz.ts        从快照渲染（文本 + mermaid）
 └── types.ts
 ```
 
-核心层不依赖 pi 运行时 → 全部可单测（43 个用例，含全部对抗场景 + 适配层 E2E）。
+核心层不依赖 pi 运行时 → 全部可单测（106 个用例，含全部对抗场景 + 适配层 E2E）。
 
 ## v0 → v1 分期
 
@@ -193,7 +193,7 @@ src/
 ## 测试
 
 ```bash
-npm run check   # tsc --noEmit + node --test（92 用例：单测/对抗 + 适配层 E2E 全用户路径）
+npm run check   # tsc --noEmit + node --test（106 用例：单测/对抗 + 适配层 E2E 全用户路径）
 npm test        # 仅跑测试
 ```
 

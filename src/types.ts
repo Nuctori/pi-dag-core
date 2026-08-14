@@ -160,8 +160,6 @@ export interface RunState {
 	createdAt: number;
 	/** monotonic issue counter used to disambiguate identical payloads. */
 	issuedCount: number;
-	/** subagent executions attributed so far (maxAgents gate). */
-	executedCount: number;
 	failReason?: string;
 	completedAt?: number;
 }

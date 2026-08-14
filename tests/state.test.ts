@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -93,6 +93,79 @@ test("run state persists and reloads (crash recovery path)", async () => {
 			"utf8",
 		);
 		assert.match(ev, /"start"/);
+	} finally {
+		await rm(r.project, { recursive: true, force: true });
+	}
+});
+
+test("P1: snapshot smuggling an invalid spec is rejected on load", async () => {
+	const r = await tmpRoots();
+	try {
+		const parsed = parseSpec(SPEC);
+		assert.ok(parsed.ok);
+		const run = freshRunFromSpec(parsed.spec, "run-smuggle", "project");
+		await persistRun(r, run);
+		// tamper: replace the embedded spec with an invalid one
+		const file = join(runDir(r, "project", "run-smuggle"), "snapshot.json");
+		const snap = JSON.parse(await readFile(file, "utf8"));
+		snap.spec.nodes.a.produces = [{ path: "a.md", check: "grep:(" }];
+		await writeFile(file, JSON.stringify(snap));
+		assert.equal(
+			await loadRun(r, "project", "run-smuggle"),
+			null,
+			"tampered snapshot must not load",
+		);
+	} finally {
+		await rm(r.project, { recursive: true, force: true });
+	}
+});
+
+test("L-A1: snapshot, audit ledger and definitions are 0o600 (never world-readable)", async () => {
+	if (process.platform === "win32") return; // POSIX permission bits only
+	const r = await tmpRoots();
+	try {
+		const parsed = parseSpec(SPEC);
+		assert.ok(parsed.ok);
+		const run = freshRunFromSpec(parsed.spec, "run-perm", "project");
+		await persistRun(r, run);
+		await appendEvent(r, run, "start", { spec: "demo" });
+		await saveDefinition(r, "project", "permdef", SPEC);
+		for (const f of [
+			join(runDir(r, "project", "run-perm"), "snapshot.json"),
+			join(runDir(r, "project", "run-perm"), "events.jsonl"),
+			join(r.project, ".pi", "workflows", "permdef.json"),
+		]) {
+			const st = await stat(f);
+			assert.equal(
+				st.mode & 0o077,
+				0,
+				`${f} must not be group/world readable (task text is sensitive)`,
+			);
+		}
+	} finally {
+		await rm(r.project, { recursive: true, force: true });
+	}
+});
+
+test("L-R2: events.jsonl rotates to events.1.jsonl past 2 MB", async () => {
+	const r = await tmpRoots();
+	try {
+		const parsed = parseSpec(SPEC);
+		assert.ok(parsed.ok);
+		const run = freshRunFromSpec(parsed.spec, "run-rot", "project");
+		await persistRun(r, run);
+		const dir = runDir(r, "project", "run-rot");
+		const file = join(dir, "events.jsonl");
+		// oversized ledger (past the 2 MB ceiling)
+		await writeFile(file, "x".repeat(2 * 1024 * 1024 + 1024));
+		await appendEvent(r, run, "complete", { node: "a", result: "ok" });
+		const rotated = await readFile(join(dir, "events.1.jsonl"), "utf8");
+		assert.ok(
+			rotated.length > 2 * 1024 * 1024,
+			"oversized ledger must be rotated aside",
+		);
+		const current = await readFile(file, "utf8");
+		assert.match(current, /"complete"/);
 	} finally {
 		await rm(r.project, { recursive: true, force: true });
 	}

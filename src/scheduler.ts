@@ -1,9 +1,8 @@
 /**
  * scheduler.ts — the workflow state machine.
  *
- * Pure logic, no I/O. The scheduler owns:
- *   - node lifecycle transitions (queued→ready→running→passed|failed|blocked)
- *   - ready-set computation (dependencies satisfied ⇒ issued to executor)
+ * State-machine logic with no I/O: transitions mutate the RunState they are
+ * handed; the caller persists. The scheduler owns:
  *   - verifier fan-in ({artifacts} injection from dependency products)
  *   - loop nodes (re-execute body until passed, hard maxIterations cap)
  *   - checkpoint nodes (awaiting_approval, resolved by the human)
@@ -57,7 +56,6 @@ export function createRun(
 		loopBodies,
 		createdAt: now,
 		issuedCount: 0,
-		executedCount: 0,
 	};
 }
 
@@ -253,7 +251,6 @@ export function markExecuted(
 	n.toolCallId = toolCallId;
 	n.executedTs = now;
 	n.attempts += 1;
-	run.executedCount += 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -403,8 +400,6 @@ export function resolveCheckpoint(
 		n.state = "failed";
 		n.failReason = reason ?? "rejected by human";
 		n.waitingSince = undefined;
-		n.state = "failed";
-		n.failReason = reason ?? "rejected by human";
 		// M1: a rejected continueOnError checkpoint is "satisfied enough" —
 		// dependents stay queued, mirroring failNode semantics.
 		if (!run.spec.nodes[node]?.continueOnError) {
@@ -424,8 +419,8 @@ export function resolveCheckpoint(
 /**
  * Mechanically pass awaiting_approval checkpoints whose spec opted into
  * `checkpoint: { autoAfterSec }` and whose wait exceeds the timeout.
- * PURE and read-only on state except the approvals themselves — no I/O,
- * no timers; the adapter sweeps on any dag tool call / resume / /dag status.
+ * No I/O and no timers — approvals mutate the run in place (the caller
+ * persists); the adapter sweeps on any dag tool call / resume / /dag status.
  * The AI cannot accelerate this: only wall-clock time can.
  */
 export function expireCheckpoints(run: RunState, now = Date.now()): string[] {

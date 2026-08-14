@@ -183,6 +183,9 @@ function sha256(buf: Buffer): string {
 	return createHash("sha256").update(buf).digest("hex");
 }
 
+/** Freshness tolerance for coarse mtime granularity (FAT/SMB ~2s). */
+const FRESH_TOLERANCE_MS = 2000;
+
 /**
  * Verify a node's declared artifacts on disk.
  * `root` is the artifact base dir (project cwd for project runs).
@@ -193,6 +196,7 @@ export async function checkArtifacts(
 	root: string,
 	specNode: NodeSpec,
 	issuedAt: number,
+	freshnessAnchor?: number,
 ): Promise<{
 	ok: boolean;
 	hashes: Record<string, string>;
@@ -202,6 +206,12 @@ export async function checkArtifacts(
 	const hashes: Record<string, string> = {};
 	let ok = true;
 	const HASH_CAP = 64 * 1024 * 1024; // 64 MB — never read huge artifacts whole for hashing
+	// P1 (F8): freshness is judged against the ACTUAL execution start (the
+	// observed subagent launch) when known — not the issue instant — with a
+	// 2s tolerance for coarse filesystem mtime granularity (FAT/SMB) and
+	// same-tick writes. A legitimately-fresh artifact must never be falsely
+	// rejected as stale (that forces a re-run = double execution).
+	const anchor = (freshnessAnchor ?? issuedAt) - FRESH_TOLERANCE_MS;
 
 	for (const a of specNode.produces ?? []) {
 		const parsed = parseCheck(a.check);
@@ -251,10 +261,10 @@ export async function checkArtifacts(
 						// ignore unreadable entries
 					}
 				}
-				entry.mtimeAfterIssue = newest >= issuedAt;
+				entry.mtimeAfterIssue = newest >= anchor;
 			} else {
 				entry.nonEmpty = st.size > 0;
-				entry.mtimeAfterIssue = st.mtimeMs >= issuedAt;
+				entry.mtimeAfterIssue = st.mtimeMs >= anchor;
 			}
 			if (st.isFile() && st.size <= HASH_CAP) {
 				const buf = await readFile(abs);
@@ -263,9 +273,17 @@ export async function checkArtifacts(
 				hashes[a.path] = hash;
 
 				if (parsed?.type === "grep" && parsed.pattern) {
-					entry.grepMatch = new RegExp(parsed.pattern).test(
-						buf.toString("utf8"),
-					);
+					// P0-4: a tampered snapshot can smuggle an invalid pattern
+					// past spec validation — fail the gate with the REAL reason
+					// instead of a lying "not found". (ReDoS hang is not
+					// catchable here; snapshot re-validation on load covers it.)
+					try {
+						entry.grepMatch = new RegExp(parsed.pattern).test(
+							buf.toString("utf8"),
+						);
+					} catch {
+						entry.detail = `invalid grep pattern "${parsed.pattern}"`;
+					}
 				}
 				if (parsed?.type === "json") {
 					try {
@@ -287,7 +305,9 @@ export async function checkArtifacts(
 			entry.detail = `missing or empty — expected at ${abs}; produces paths are RELATIVE to the session cwd — if the subagent wrote it under its own working dir, copy/move it here`;
 			ok = false;
 		} else if (parsed?.type === "grep" && (!entry.exists || !entry.grepMatch)) {
-			entry.detail = `grep "${parsed.pattern}" not found`;
+			// P0-4: entry.detail may already name an invalid pattern — don't
+			// overwrite the real reason with a misleading "not found".
+			entry.detail ??= `grep "${parsed.pattern}" not found`;
 			ok = false;
 		} else if (parsed?.type === "json" && (!entry.exists || !entry.jsonOk)) {
 			entry.detail = "not valid JSON";

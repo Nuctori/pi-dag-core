@@ -19,6 +19,7 @@ import {
 	rm,
 	open,
 	stat,
+	chmod,
 } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
@@ -245,6 +246,9 @@ export async function loadRun(
 	try {
 		const file = join(runDir(r, scope, runId), "snapshot.json");
 		const raw = JSON.parse(await readFile(file, "utf8")) as RunState;
+		// L-A1 migration: pre-0.1.7 files may still be 0644 — tighten best-effort
+		// on every read so old runs heal without waiting for the next transition.
+		await chmod(file, 0o600).catch(() => {});
 		// P1: re-validate the embedded spec on load — a tampered snapshot can
 		// otherwise smuggle an invalid spec (incl. a pathological grep pattern
 		// that hangs dag_complete) past the startup gate. Corrupt → treated as

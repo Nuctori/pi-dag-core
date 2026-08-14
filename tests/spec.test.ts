@@ -267,6 +267,33 @@ test("P1: duplicate agent+task payloads are rejected", () => {
 	assert.match(issuesOf(bad).join(" "), /duplicate agent\+task payload/);
 });
 
+test("P1: topologically ordered duplicate payloads are allowed (no parallel collision)", () => {
+	const ok = JSON.stringify({
+		name: "x",
+		nodes: {
+			a: { agent: "w", task: "do the same thing" },
+			b: { agent: "w", task: "do the same thing", needs: ["a"] },
+		},
+	});
+	assert.equal(
+		issuesOf(ok).length,
+		0,
+		"ordered re-use never collides in the pending pool",
+	);
+});
+
+test("P1: loop-body duplicate payload with unordered sibling is still rejected", () => {
+	const bad = JSON.stringify({
+		name: "x",
+		nodes: {
+			loop: { loop: { body: "body", maxIterations: 2 } },
+			body: { agent: "w", task: "do the same thing" },
+			other: { agent: "w", task: "do the same thing" },
+		},
+	});
+	assert.match(issuesOf(bad).join(" "), /duplicate agent\+task payload/);
+});
+
 test("P1: finish cannot reference a loop body", () => {
 	const bad = JSON.stringify({
 		name: "x",

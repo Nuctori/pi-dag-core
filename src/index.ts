@@ -114,10 +114,6 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		buffer = [];
-	});
-
-	pi.on("session_shutdown", async () => {
-		buffer = [];
 		captureActive = false;
 	});
 	pi.on("resources_discover", async () => {
@@ -363,7 +359,11 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 					let keepRunning: string[] = [];
 					if (params.resumeRunId) {
 						const loaded = await loadRun(params.resumeRunId);
-						if (!("error" in loaded)) {
+						// M7b: a DEAD run (aborted/completed) is frozen — draining
+						// would attribute calls into it (markExecuted + persist)
+						// before manager.start rejects; check status first so a
+						// mistaken resume cannot pollute a dead snapshot.
+						if (!("error" in loaded) && loaded.status === "running") {
 							const attributed = await ingestAndDrain(loaded);
 							keepRunning = attributed.map((a) => a.node);
 						}
@@ -658,6 +658,9 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 					if ("error" in run) return ok(`dag_abort rejected: ${run.error}`);
 					const res = await manager.abort(run, params.reason);
 					if (!res.ok) return ok(`dag_abort rejected: ${res.error}`);
+					// L-A2: no active workflow remains — stop observing subagent
+					// calls until the next dag_start re-arms the gate.
+					captureActive = false;
 					return ok(`Workflow ${params.runId} aborted: ${params.reason}`);
 				} catch (e) {
 					return ok(`dag_abort error: ${(e as Error).message}`);

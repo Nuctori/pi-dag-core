@@ -122,3 +122,17 @@
 | L-D2 | 文档 | README 用例数矛盾（43 vs 92） | 对齐 106（含 4 个新测试） |
 
 **未修（记录在案，勿重开）**：跨会话并发无锁（F10/L5，架构外）；spec O(V³) 上限（节点数小）；F8 容差正向测试（F8 机制已实现，仅缺正向用例）；跨 run 诊断串扰（agent 过滤已限缩，加 runId 标记收益不抵复杂度）。
+
+## 附录 D：v0.1.8 复核修复轮（2026-08-14，双路独立复核后）
+
+v0.1.7 发布后，fresh-context 独立复核（9/9 声称 verified）与后台安全审查/决策审计（run-48700）一致重报上轮 blocker + 新发现。全部修复，110/110 绿（+4 测试）。
+
+| id | 严重度 | 发现 | 修复 |
+| --- | --- | --- | --- |
+| P1-豁免 | HIGH（上轮 blocker 原样进 v0.1.7） | 重复 agent+task 校验无条件拒绝拓扑有序节点（误拒合法 spec）；loadRun validateSpec 使含此类 spec 的旧 run 升级后失联 | 校验移到 reach 闭包之后，仅拒无序对（D-011，supersede D-007）；spec/state 测试各 1（ordered 放行 + 旧快照可 load） |
+| M7b | MEDIUM | `dag_start(resumeRunId)` 先 drain 归因后查 status——死 run（aborted/completed）被污染：节点置 running、executedTs/事件落盘，违反冻结不变量 | 适配层先查 `status === "running"` 再 drain；E2E 测试（abort 后 replay resume → 快照冻结、账本无 executed） |
+| ReDoS-注释 | MEDIUM | evidence.ts/spec.ts 注释声称"load 重校验堵死篡改快照 ReDoS"——编译校验不防病态正则执行期挂起（探针实测 `(a+)+$` 挂 >15s） | 注释如实：编译校验仅防"撒谎诊断"；执行期 ReDoS 由 220 字符上限有界，恶意 spec 属 M8 信任边界（spec 作者即会话主体） |
+| L-A2-补 | LOW | captureActive 只在 shutdown 复位——abort/finish 后会话无活动 workflow 仍继续捕获滞留 | dag_abort/dag_finish 成功路径复位；合并重复的 session_shutdown handler |
+| L-A1-迁移 | INFO | 旧 0644 文件（v0.1.6 及更早）不重写则永远 0644 | loadRun 读路径 best-effort chmod 0o600；L-A1 测试加迁移断言 |
+
+**未修（记录在案）**：listRuns/loadRun 校验口径不一致（被拒快照仍列于 /dag list——保留：列表是目录扫描，隐藏损坏快照更糟）；F8 正向测试；P0-1 孤儿调用进 observed 诊断（agent 过滤已限缩）。

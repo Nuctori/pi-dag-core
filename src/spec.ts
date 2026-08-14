@@ -237,9 +237,10 @@ function validateGraph(s: Spec): ValidationIssue[] {
 				}
 				// P0-4: a grep check must be a non-empty COMPILABLE pattern —
 				// otherwise the gate fails with a lying "not found" diagnostic
-				// and forces a needless re-run. (Pathological-but-valid patterns
-				// remain possible; snapshot re-validation on load closes the
-				// tampered-snapshot path — see P1.)
+				// and forces a needless re-run. Pathological-but-valid patterns
+				// (ReDoS) still compile and can hang the gate — bounded only by
+				// the 220-char length cap; a malicious spec is out of scope
+				// (the spec author IS the session principal, M8).
 				if (pattern.length === 0) {
 					issue(
 						issues,
@@ -258,26 +259,6 @@ function validateGraph(s: Spec): ValidationIssue[] {
 					}
 				}
 			}
-		}
-	}
-
-	// P1: duplicate agent+task payloads break parallel tasks[] attribution —
-	// the dedupe key (toolCallId|agent|task) collides and the second node can
-	// never be attributed (it stays ready forever). Reject at spec time, using
-	// the same normalization the attribution path uses.
-	const payloads = new Map<string, string>();
-	for (const [name, n] of Object.entries(s.nodes)) {
-		if (!n.agent || !n.task) continue; // checkpoint / loop owner
-		const key = `${n.agent}\u0000${normalizeTask(n.task)}`;
-		const prev = payloads.get(key);
-		if (prev) {
-			issue(
-				issues,
-				`nodes.${name}`,
-				`duplicate agent+task payload as node "${prev}" — parallel attribution would collide; make the task text distinct`,
-			);
-		} else {
-			payloads.set(key, name);
 		}
 	}
 
@@ -376,6 +357,33 @@ function validateGraph(s: Spec): ValidationIssue[] {
 			}
 		}
 	}
+	// P1: duplicate agent+task payloads break parallel tasks[] attribution —
+	// the dedupe key (toolCallId|agent|task) collides while BOTH nodes are
+	// pending. The runtime only holds READY nodes in the pending pool and
+	// issues in topological order, so a strictly ordered re-use (a runs and
+	// passes before b is ever issued) never collides — same exemption as
+	// overlapping producers. Must run AFTER the reach closure (above).
+	const payloads = new Map<string, string>();
+	for (const [name, n] of Object.entries(s.nodes)) {
+		if (!n.agent || !n.task) continue; // checkpoint / loop owner
+		const key = `${n.agent}\u0000${normalizeTask(n.task)}`;
+		const prev = payloads.get(key);
+		if (!prev) {
+			payloads.set(key, name);
+			continue;
+		}
+		if (reach.get(prev)!.has(name) || reach.get(name)!.has(prev)) {
+			// ordered re-use — the earlier node's payload is consumed (and its
+			// toolCallId retired) before the later node is ever issued
+			continue;
+		}
+		issue(
+			issues,
+			`nodes.${name}`,
+			`duplicate agent+task payload as node "${prev}" (unordered writers — parallel attribution would collide); make the task text distinct or add a needs edge`,
+		);
+	}
+
 	const producers = new Map<string, string[]>();
 	for (const [name, n] of Object.entries(s.nodes)) {
 		for (const a of n.produces ?? []) {

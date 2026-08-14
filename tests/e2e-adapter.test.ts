@@ -789,6 +789,93 @@ test("E2E (P0-2): duplicate dag_start(resumeRunId) must not orphan finished evid
 	}
 });
 
+test("E2E (M7b): resume of a dead run rejects WITHOUT draining/mutating it", async () => {
+	const t = await tmpProject();
+	try {
+		const pi = makePi();
+		await bootExtension(pi, t.dir);
+		const spec = JSON.stringify({
+			name: "e2e-dead",
+			nodes: {
+				a: {
+					agent: "w",
+					task: "produce a.md",
+					produces: [{ path: "a.md", check: "nonEmpty" }],
+				},
+			},
+		});
+		const { runId, text } = await startRun(pi, t.dir, spec);
+		const { agent, task } = toolArgs(text);
+
+		// the node executes AND finishes while the run is still live
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-live",
+			toolName: "subagent",
+			args: { agent, task },
+		});
+		await writeFile(join(t.dir, "a.md"), "artifact content");
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-live",
+			toolName: "subagent",
+			isError: false,
+		});
+
+		// human aborts the run
+		const abort = pi.tools.find((x) => x.name === "dag_abort")!;
+		const ab = (await abort.execute(
+			"c2",
+			{ runId, reason: "closed by human" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(ab.content[0]?.text ?? "", /aborted/);
+
+		// message-replay resume of the DEAD run — the buffered call must NOT
+		// be attributed into it (that would mutate + persist a frozen snapshot)
+		const start = pi.tools.find((x) => x.name === "dag_start")!;
+		const resumed = (await start.execute(
+			"c3",
+			{ resumeRunId: runId },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		assert.match(resumed.content[0]?.text ?? "", /not resumable/);
+
+		const runDir2 = join(
+			homedir(),
+			".pi",
+			"agent",
+			"workflows",
+			"runs",
+			"s-e2e-session",
+			runId,
+		);
+		const snap = JSON.parse(
+			await readFile(join(runDir2, "snapshot.json"), "utf8"),
+		);
+		assert.equal(
+			snap.nodes.a.state,
+			"ready",
+			"dead run snapshot must stay frozen at its pre-abort state (no attribution into it)",
+		);
+		assert.equal(
+			snap.nodes.a.executedTs,
+			undefined,
+			"dead run must not gain execution evidence",
+		);
+		const ledger = await readFile(join(runDir2, "events.jsonl"), "utf8");
+		assert.doesNotMatch(
+			ledger,
+			/tc-live/,
+			"no executed event may land in a dead run's ledger",
+		);
+	} finally {
+		await t.cleanup();
+	}
+});
+
 test("E2E (P0-3): /dag approve resolves the human gate (load inside serial queue)", async () => {
 	const t = await tmpProject();
 	try {

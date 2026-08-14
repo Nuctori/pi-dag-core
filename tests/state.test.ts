@@ -120,6 +120,30 @@ test("P1: snapshot smuggling an invalid spec is rejected on load", async () => {
 	}
 });
 
+test("P1: snapshot with topologically ordered duplicate payloads still loads (backward compat)", async () => {
+	const r = await tmpRoots();
+	try {
+		const spec = parseSpec(
+			JSON.stringify({
+				name: "ordered-dup",
+				nodes: {
+					a: { agent: "w", task: "same payload" },
+					b: { agent: "w", task: "same payload", needs: ["a"] },
+				},
+			}),
+		);
+		assert.ok(spec.ok, "ordered duplicates must validate (no parallel collision)");
+		const run = freshRunFromSpec(spec.spec, "run-bc", "project");
+		await persistRun(r, run);
+		assert.ok(
+			await loadRun(r, "project", "run-bc"),
+			"pre-existing runs with ordered duplicate payloads must stay reachable after upgrade",
+		);
+	} finally {
+		await rm(r.project, { recursive: true, force: true });
+	}
+});
+
 test("L-A1: snapshot, audit ledger and definitions are 0o600 (never world-readable)", async () => {
 	if (process.platform === "win32") return; // POSIX permission bits only
 	const r = await tmpRoots();
@@ -142,6 +166,17 @@ test("L-A1: snapshot, audit ledger and definitions are 0o600 (never world-readab
 				`${f} must not be group/world readable (task text is sensitive)`,
 			);
 		}
+		// migration: a pre-0.1.7 0644 snapshot heals on load
+		const old = freshRunFromSpec(parsed.spec, "run-old", "project");
+		const oldFile = join(runDir(r, "project", "run-old"), "snapshot.json");
+		await writeFile(oldFile, JSON.stringify(old));
+		await loadRun(r, "project", "run-old");
+		const healed = await stat(oldFile);
+		assert.equal(
+			healed.mode & 0o077,
+			0,
+			"old 0644 snapshot must be tightened on load",
+		);
 	} finally {
 		await rm(r.project, { recursive: true, force: true });
 	}

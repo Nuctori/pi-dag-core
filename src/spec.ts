@@ -413,9 +413,7 @@ function validateGraph(s: Spec): ValidationIssue[] {
 		if (!names.has(f)) {
 			issue(issues, `finish`, `finish node "${f}" does not exist`);
 		} else {
-			const owner = Object.entries(s.nodes).find(
-				([, n]) => n.loop?.body === f,
-			);
+			const owner = Object.entries(s.nodes).find(([, n]) => n.loop?.body === f);
 			if (owner) {
 				issue(
 					issues,

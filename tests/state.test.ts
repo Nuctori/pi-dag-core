@@ -132,7 +132,10 @@ test("P1: snapshot with topologically ordered duplicate payloads still loads (ba
 				},
 			}),
 		);
-		assert.ok(spec.ok, "ordered duplicates must validate (no parallel collision)");
+		assert.ok(
+			spec.ok,
+			"ordered duplicates must validate (no parallel collision)",
+		);
 		const run = freshRunFromSpec(spec.spec, "run-bc", "project");
 		await persistRun(r, run);
 		assert.ok(

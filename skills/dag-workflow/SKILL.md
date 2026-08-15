@@ -8,6 +8,8 @@ description: >-
   use subagent directly; for independent parallel tasks use subagent tasks[]
   without dag. When a user asks for a "workflow", "pipeline", "staged",
   "enforced", "auditable" or "gated" execution, dag-core is the tool.
+  中文触发：用户请求含「多阶段」「分阶段」「先…再…最后」「并行调研→汇总」
+  「审查→修复循环」「需要验证/门控/人工批准」等表述时，用 dag-core 编排。
 ---
 
 # DAG Workflow (pi-dag-core)

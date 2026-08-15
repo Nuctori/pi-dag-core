@@ -110,6 +110,33 @@ test("E2E: full adapter flow — start, capture, complete, finish", async () => 
 			content: { type: string; text: string }[];
 		};
 		assert.match(f.content[0]?.text ?? "", /completed/);
+
+		// L-A2: after finish no active workflow remains — a subagent call must
+		// not be captured (sensitive args retention) nor attributed to a later run
+		await pi.emit("tool_execution_start", {
+			toolCallId: "tc-post",
+			toolName: "subagent",
+			args: { agent: "scout", task: "post-finish stray call" },
+		});
+		await pi.emit("tool_execution_end", {
+			toolCallId: "tc-post",
+			toolName: "subagent",
+			isError: false,
+		});
+
+		// a second workflow starts fresh; completing a node without any
+		// post-start call must NOT surface the post-finish call
+		const { runId: runId2 } = await startRun(pi, t.dir);
+		const res2 = (await complete.execute(
+			"c5",
+			{ runId: runId2, node: "discover" },
+			undefined,
+			undefined,
+			{ cwd: t.dir },
+		)) as { content: { type: string; text: string }[] };
+		const out2 = res2.content[0]?.text ?? "";
+		assert.match(out2, /no execution evidence/);
+		assert.doesNotMatch(out2, /tc-post/);
 	} finally {
 		await t.cleanup();
 	}

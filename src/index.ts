@@ -629,6 +629,9 @@ export default function dagCoreExtension(pi: ExtensionAPI) {
 						return ok(
 							`dag_finish rejected — workflow incomplete:\n${res.report!.join("\n")}${autoNote(autoApproved)}${stallNote(run)}`,
 						);
+					// L-A2: workflow done — no active run remains, stop observing
+					// subagent calls until the next dag_start re-arms the gate.
+					captureActive = false;
 					return ok(
 						`Workflow ${params.runId} completed.\n\n${res.report!.join("\n")}${autoNote(autoApproved)}`,
 					);

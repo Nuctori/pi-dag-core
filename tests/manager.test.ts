@@ -238,7 +238,9 @@ test("ADVERSARIAL: stale artifact (written before issue) is rejected", async () 
 		// artifact written BEFORE the workflow starts (i.e. before any node is issued)
 		await writeArtifact(t.project, "context.md", "pre-existing file");
 		// age it well beyond the 2s freshness tolerance — "old file, new claim"
-		const old = Date.now() - 60_000;
+		// utimes 数值参数按「Unix 秒」解释——传毫秒数在 Linux 上会成功设成远未来 mtime，
+		// 只有 Date 对象才跨平台正确 backdate
+		const old = new Date(Date.now() - 60_000);
 		try {
 			await utimes(join(t.project, "context.md"), old, old);
 		} catch {

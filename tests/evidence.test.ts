@@ -241,7 +241,9 @@ test("P0-regression: a freshly created EMPTY directory passes the default exists
 		// an empty dir whose mtime predates the issue must still fail freshness
 		const staleDir = join(dir, "stale");
 		await mkdir(staleDir);
-		const old = Date.now() - 60_000; // well beyond the 2s freshness tolerance
+		const old = new Date(Date.now() - 60_000); // well beyond the 2s freshness tolerance
+		// utimes 数值参数按「Unix 秒」解释——传毫秒数在 Linux 上会成功设成远未来 mtime
+		//（目录反而变 fresh），只有用 Date 对象才能跨平台正确 backdate
 		try {
 			await utimes(staleDir, old, old);
 		} catch {

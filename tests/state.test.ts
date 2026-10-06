@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -172,6 +172,8 @@ test("L-A1: snapshot, audit ledger and definitions are 0o600 (never world-readab
 		// migration: a pre-0.1.7 0644 snapshot heals on load
 		const old = freshRunFromSpec(parsed.spec, "run-old", "project");
 		const oldFile = join(runDir(r, "project", "run-old"), "snapshot.json");
+		// run-old 目录此前不存在——模拟 pre-0.1.7 遗留文件须先建目录再写入
+		await mkdir(runDir(r, "project", "run-old"), { recursive: true });
 		await writeFile(oldFile, JSON.stringify(old));
 		await loadRun(r, "project", "run-old");
 		const healed = await stat(oldFile);
